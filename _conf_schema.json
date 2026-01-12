@@ -2,13 +2,13 @@
   "client_id": {
     "description": "FFLogs API Client ID",
     "type": "string",
-    "hint": "在 https://cn.fflogs.com/api/v2/client 获取",
+    "hint": "在 https://www.fflogs.com/api/clients/ 获取",
     "default": ""
   },
   "client_secret": {
     "description": "FFLogs API Client Secret",
     "type": "string",
-    "hint": "在 https://cn.fflogs.com/api/v2/client 获取",
+    "hint": "在 https://www.fflogs.com/api/clients/ 获取",
     "default": ""
   }
 }
