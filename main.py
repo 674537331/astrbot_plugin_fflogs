@@ -116,4 +116,16 @@ class FF14LogsPlugin(Star):
             if not has_ult: msg += "  暂无记录\n"
 
             msg += "\n【零式 Savage (近期)】\n"
-            savage_items = sorted
+            savage_items = sorted(
+                [(n, final_results[n]) for n in final_results if n not in ULTIMATE_LIST], 
+                key=lambda x: x[0], 
+                reverse=True
+            )
+            for name, res in savage_items[:8]:
+                msg += f"  {name.ljust(7)}: {res['percent']:.1f} ({res['job']})\n"
+            
+            msg += "\n━━━━━━━━━━━━━━\n数据已穿透 5.0-7.0 归档区"
+            yield event.plain_result(msg.strip())
+        except Exception as e:
+            logger.error(f"FFLogs 插件出错: {e}")
+            yield event.plain_result(f"❌ 查询失败: {str(e)}")
