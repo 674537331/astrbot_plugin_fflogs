@@ -1,15 +1,14 @@
 import httpx
 import logging
 from astrbot.api.star import Context, Star, register
-from astrbot.api.event import filter
-from astrbot.api.model import MessageEvent # 只需要这个用于类型提示
+from astrbot.api.event import filter, MessageEvent
+
 logger = logging.getLogger("astrbot")
 
 @register("fflogs_query", "YourName", "FF14 Logs 查询", "1.1.0")
 class FF14LogsPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
-        # 这里的 config 会自动读取 _conf_schema.json 定义的内容
         self.config = config if config else {}
         self.token = None
 
@@ -17,10 +16,8 @@ class FF14LogsPlugin(Star):
         """获取 FFLogs OAuth2 Token"""
         cid = self.config.get("client_id")
         secret = self.config.get("client_secret")
-        
         if not cid or not secret:
             raise Exception("请先在插件配置中填写 FFLogs Client ID 和 Secret")
-            
         url = "https://www.fflogs.com/oauth/token"
         async with httpx.AsyncClient() as client:
             res = await client.post(url, data={"grant_type": "client_credentials"}, auth=(cid, secret))
@@ -30,15 +27,10 @@ class FF14LogsPlugin(Star):
     @filter.command("fflogs")
     async def fflogs(self, event: MessageEvent, r_name: str, s_name: str):
         '''查询 FF14 角色全版本战绩。用法: /fflogs 角色名 服务器名'''
-        
         yield event.plain_result(f"🔍 正在检索 FFLogs 历史档案: {r_name} @ {s_name}...")
-        
         try:
-            # 1. 检查并获取 Token
             if not self.token:
                 await self._get_token()
-
-            # 2. 核心查询逻辑 (保留你的 GraphQL)
             query = """
             query ($name: String, $server: String, $region: String) {
               characterData {
@@ -56,20 +48,16 @@ class FF14LogsPlugin(Star):
               }
             }
             """
-            
             headers = {"Authorization": f"Bearer {self.token}"}
             async with httpx.AsyncClient() as client:
                 payload = {"query": query, "variables": {"name": r_name, "server": s_name, "region": "CN"}}
                 res = await client.post("https://cn.fflogs.com/api/v2/client", json=payload, headers=headers)
                 res.raise_for_status()
                 data = res.json()
-
             char = data.get("data", {}).get("characterData", {}).get("character")
             if not char:
-                yield event.plain_result(f"❌ 未找到角色: {r_name} @ {s_name}，请检查名称是否正确或战绩是否公开。")
+                yield event.plain_result(f"❌ 未找到角色: {r_name} @ {s_name}")
                 return
-
-            # 3. 数据处理映射 (保留你的 JOB_MAP 和 BOSS_MAP)
             JOB_MAP = {
                 "Paladin": "骑士", "Warrior": "战士", "DarkKnight": "暗骑", "Gunbreaker": "绝枪",
                 "WhiteMage": "白魔", "Scholar": "学者", "Astrologian": "占星", "Sage": "贤者",
@@ -80,11 +68,9 @@ class FF14LogsPlugin(Star):
             BOSS_MAP = {
                 1075: "绝亚", 1074: "绝神兵", 1073: "绝巴哈", 1076: "绝龙诗", 1077: "绝欧",
                 1062: "绝亚", 1061: "绝神兵", 1060: "绝巴哈", 2060: "绝伊甸", 1068: "绝欧", 1065: "绝龙诗",
-                1050: "绝亚", 1048: "绝神兵", 1047: "绝巴哈",
-                93: "M1S", 94: "M2S", 95: "M3S", 96: "M4S"
+                1050: "绝亚", 1048: "绝神兵", 1047: "绝巴哈", 93: "M1S", 94: "M2S", 95: "M3S", 96: "M4S"
             }
             ULTIMATE_LIST = ["绝伊甸", "绝欧", "绝龙诗", "绝亚", "绝神兵", "绝巴哈"]
-
             final_results = {} 
             for zone_key in char:
                 zone_data = char[zone_key]
@@ -95,17 +81,8 @@ class FF14LogsPlugin(Star):
                     if eid in BOSS_MAP and percent is not None:
                         boss_name = BOSS_MAP[eid]
                         if boss_name not in final_results or percent > final_results[boss_name]['percent']:
-                            final_results[boss_name] = {
-                                "percent": percent, 
-                                "job": JOB_MAP.get(r.get("spec"), r.get("spec"))
-                            }
-
-            if not final_results:
-                yield event.plain_result(f"📊 {r_name} @ {s_name}\n⚠️ 未发现公开战绩记录。")
-                return
-
-            # 4. 组装输出
-            msg = f"📊 FFLogs 全版本战绩: {r_name} @ {s_name}\n\n【绝境战 Ultimate】\n"
+                            final_results[boss_name] = {"percent": percent, "job": JOB_MAP.get(r.get("spec"), r.get("spec"))}
+            msg = f"📊 FFLogs 战绩: {r_name} @ {s_name}\n\n【绝境战】\n"
             has_ult = False
             for name in ULTIMATE_LIST:
                 if name in final_results:
@@ -113,17 +90,10 @@ class FF14LogsPlugin(Star):
                     msg += f"  {name.ljust(6)}: {res['percent']:.1f} ({res['job']})\n"
                     has_ult = True
             if not has_ult: msg += "  暂无记录\n"
-
-            msg += "\n【零式 Savage (近期)】\n"
-            savage_items = sorted(
-                [(n, final_results[n]) for n in final_results if n not in ULTIMATE_LIST], 
-                key=lambda x: x[0], 
-                reverse=True
-            )
+            msg += "\n【零式 (近期)】\n"
+            savage_items = sorted([(n, final_results[n]) for n in final_results if n not in ULTIMATE_LIST], key=lambda x: x[0], reverse=True)
             for name, res in savage_items[:8]:
                 msg += f"  {name.ljust(7)}: {res['percent']:.1f} ({res['job']})\n"
-            
-            msg += "\n━━━━━━━━━━━━━━\n数据已穿透 5.0-7.0 归档区"
             yield event.plain_result(msg.strip())
         except Exception as e:
             logger.error(f"FFLogs 插件出错: {e}")
