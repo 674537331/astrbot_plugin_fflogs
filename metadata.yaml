@@ -1,16 +1,17 @@
-name: ff14_logs_query
-display_name: FF14 Logs 全版本查询
-description: 查询 FF14 角色 5.0-7.0 全版本绝本与零式战绩，支持 7.0 归档区数据穿透。
-author: RyanVaderAn
-version: 1.0.0
-repo: https://github.com/YourName/astrbot_plugin_ff14logs
-# 配置项定义：用户在 WebUI 填写的 Key 会保存在这里
+name: astrbot_plugin_fflogs
+desc: FF14 Logs 全版本查询插件
+help: 使用 /fflogs [角色名] [服务器名] 查询战绩
+version: v1.0.0
+author: YourName
+repo: https://github.com/674537331/astrbot_plugin_fflogs
+
 config_schema:
-  client_id:
-    type: string
-    description: "FFLogs API Client ID (从 fflogs.com/api/clients 申请)"
-    default: ""
-  client_secret:
-    type: string
-    description: "FFLogs API Client Secret"
-    default: ""s
+  items:
+    client_id:
+      type: string
+      description: "FFLogs API Client ID"
+      default: ""
+    client_secret:
+      type: string
+      description: "FFLogs API Client Secret"
+      default: ""
