@@ -1,0 +1,14 @@
+{
+  "client_id": {
+    "description": "FFLogs API Client ID",
+    "type": "string",
+    "hint": "前往 fflogs.com API Clients 页面获取",
+    "default": ""
+  },
+  "client_secret": {
+    "description": "FFLogs API Client Secret",
+    "type": "string",
+    "hint": "前往 fflogs.com API Clients 页面获取",
+    "default": ""
+  }
+}
