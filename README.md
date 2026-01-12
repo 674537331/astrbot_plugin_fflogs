@@ -1,6 +1,6 @@
 # AstrBot FFLogs 查询插件
 一个为 AstrBot [<sup>1</sup>](https://github.com/Soulter/AstrBot) 设计的 Final Fantasy XIV 战绩查询插件。支持通过 FFLogs API 获取 5.0 - 7.0 版本的绝本与零式副本数据。
- ![<sup>1</sup>](https://github.com/674537331/astrbot_plugin_fflogs/blob/master/docs/1.jpg)
+ ![<sup>1</sup>](https://cdn.jsdelivr.net/gh/674537331/astrbot_plugin_fflogs@master/docs/1.jpg)
 ## ✨ 功能特性
 - **多版本支持**：涵盖 5.0 漆黑的反叛者、6.0 晓月之终途及 7.0 最新版本。
 - **全副本覆盖**：支持绝境战、万魔殿、阿卡狄亚等零式副本。
