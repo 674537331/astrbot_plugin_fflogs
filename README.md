@@ -1,9 +1,2 @@
-# helloworld
-
-AstrBot 插件模板
-
-A template plugin for AstrBot plugin feature
-
-# 支持
-
-[帮助文档](https://astrbot.app)
+输入 /fflogs 角色名 服务器
+本插件完全由Gemini 3 编写，仅在AstrBotv4.11.1下进行过测试，如果您有任何功能性建议与BUG反馈，请联系QQ674537331
