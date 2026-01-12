@@ -5,7 +5,7 @@ from astrbot.api.event import filter
 
 logger = logging.getLogger("astrbot")
 
-@register("fflogs_query", "YourName", "FF14 Logs 全版本查询", "1.2.0")
+@register("fflogs_query", "YourName", "FF14 Logs 全版本查询", "1.2.1")
 class FF14LogsPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -32,7 +32,7 @@ class FF14LogsPlugin(Star):
         try:
             if not self.token: await self._get_token()
 
-            # 扩展查询范围：包含 7.0 (63), 6.4 (54), 6.2 (49), 6.0 (44) 以及绝本
+            # 查询 7.0(63), 6.4(54), 6.2(49), 6.0(44) 以及绝本
             query = """
             query ($name: String, $server: String, $region: String) {
               characterData {
@@ -41,10 +41,10 @@ class FF14LogsPlugin(Star):
                   s64: zoneRankings(zoneID: 54, difficulty: 101)
                   s62: zoneRankings(zoneID: 49, difficulty: 101)
                   s60: zoneRankings(zoneID: 44, difficulty: 101)
-                  u_new: zoneRankings(zoneID: 62)
-                  u_old: zoneRankings(zoneID: 53)
-                  u_dsr: zoneRankings(zoneID: 45)
-                  u_leg: zoneRankings(zoneID: 43)
+                  u_6x: zoneRankings(zoneID: 62)
+                  u_5x: zoneRankings(zoneID: 53)
+                  u_4x: zoneRankings(zoneID: 45)
+                  u_3x: zoneRankings(zoneID: 43)
                 }
               }
             }
@@ -61,7 +61,6 @@ class FF14LogsPlugin(Star):
                 yield event.plain_result(f"❌ 未找到角色: {r_name} @ {s_name}")
                 return
 
-            # 职业映射
             JOB_MAP = {
                 "Paladin": "骑士", "Warrior": "战士", "DarkKnight": "暗骑", "Gunbreaker": "绝枪",
                 "WhiteMage": "白魔", "Scholar": "学者", "Astrologian": "占星", "Sage": "贤者",
@@ -70,17 +69,11 @@ class FF14LogsPlugin(Star):
                 "BlackMage": "黑魔", "Summoner": "召唤", "RedMage": "赤魔", "Pictomancer": "画家"
             }
 
-            # 副本映射
             BOSS_MAP = {
-                # 7.0 零式
                 93: "M1S", 94: "M2S", 95: "M3S", 96: "M4S",
-                # 6.4 零式
                 89: "P9S", 90: "P10S", 91: "P11S", 92: "P12S",
-                # 6.2 零式
                 84: "P5S", 85: "P6S", 86: "P7S", 87: "P8S",
-                # 6.0 零式
                 79: "P1S", 80: "P2S", 81: "P3S", 82: "P4S",
-                # 绝本
                 1077: "绝伊甸", 1068: "绝欧", 1065: "绝龙诗", 1062: "绝亚", 1061: "绝神兵", 1060: "绝巴哈"
             }
 
@@ -91,43 +84,41 @@ class FF14LogsPlugin(Star):
                     bid = r.get("encounter", {}).get("id")
                     if bid in BOSS_MAP:
                         name = BOSS_MAP[bid]
-                        percent = r.get("rankPercent", 0)
+                        # 核心修复：处理 None 值，确保百分比是数字
+                        raw_p = r.get("rankPercent")
+                        percent = float(raw_p) if raw_p is not None else 0.0
                         job = JOB_MAP.get(r.get("spec"), r.get("spec"))
-                        # 取最高纪录
                         if name not in results or percent > results[name]['p']:
                             results[name] = {"p": percent, "j": job}
 
-            if not results:
-                yield event.plain_result(f"📊 {r_name}@{s_name}\n无公开解析记录。")
-                return
-
-            # 格式化输出
+            msg = f"📊 FFLogs 战绩: {r_name} @ {s_name}\n"
+            
             def get_line(name):
                 if name in results:
                     res = results[name]
-                    return f"{name.ljust(5)}: {res['p']:>4.1f} ({res['j']})"
+                    return f"  {name.ljust(6)}: {res['p']:>4.1f} ({res['j']})"
                 return None
 
-            msg = f"📊 FFLogs 战绩: {r_name} @ {s_name}\n"
-            
-            # 绝本部分
+            # 1. 绝境战
             msg += "\n【绝境战】\n"
-            ults = ["绝伊甸", "绝欧", "绝龙诗", "绝亚", "绝神兵", "绝巴哈"]
-            u_lines = [get_line(u) for u in ults if get_line(u)]
+            u_list = ["绝伊甸", "绝欧", "绝龙诗", "绝亚", "绝神兵", "绝巴哈"]
+            u_lines = [get_line(u) for u in u_list if get_line(u)]
             msg += "\n".join(u_lines) if u_lines else "  暂无记录"
 
-            # 7.0 零式
+            # 2. 7.0 零式
             msg += "\n\n【7.0 阿卡狄亚】\n"
-            s70 = [get_line(b) for b in ["M4S", "M3S", "M2S", "M1S"] if get_line(b)]
-            msg += "\n".join(s70) if s70 else "  暂无记录"
+            s70_list = ["M4S", "M3S", "M2S", "M1S"]
+            s70_lines = [get_line(b) for b in s70_list if get_line(b)]
+            msg += "\n".join(s70_lines) if s70_lines else "  暂无记录"
 
-            # 6.0 零式
+            # 3. 6.0 零式 (万魔殿)
             msg += "\n\n【6.0 万魔殿】\n"
-            s60 = [get_line(b) for b in ["P12S", "P11S", "P10S", "P9S", "P8S", "P7S", "P6S", "P5S", "P4S", "P3S", "P2S", "P1S"] if get_line(b)]
-            if s60:
-                # 如果记录太多，只显示最近的 8 个
-                msg += "\n".join(s60) 
-                if len(s60) > 8: msg += f"\n  ...(余下 {len(s60)-8} 个副本已省略)"
+            # 分三段显示：天狱、炼狱、边境
+            s60_all = ["P12S", "P11S", "P10S", "P9S", "P8S", "P7S", "P6S", "P5S", "P4S", "P3S", "P2S", "P1S"]
+            s60_lines = [get_line(b) for b in s60_all if get_line(b)]
+            
+            if s60_lines:
+                msg += "\n".join(s60_lines)
             else:
                 msg += "  暂无记录"
 
@@ -136,5 +127,3 @@ class FF14LogsPlugin(Star):
         except Exception as e:
             logger.error(f"FFLogs 出错: {e}")
             yield event.plain_result(f"❌ 查询失败: {str(e)}")
-
-
