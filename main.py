@@ -1,9 +1,8 @@
 import httpx
 import logging
 from astrbot.api.star import Context, Star, register
-from astrbot.api.event import filter, AstrBotMessage
-from astrbot.api.model import MessageEvent
-
+from astrbot.api.event import filter
+from astrbot.api.model import MessageEvent # 只需要这个用于类型提示
 logger = logging.getLogger("astrbot")
 
 @register("fflogs_query", "YourName", "FF14 Logs 查询", "1.1.0")
