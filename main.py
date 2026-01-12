@@ -2,11 +2,11 @@ import httpx
 import logging
 from astrbot.api.all import *
 logger = logging.getLogger("astrbot")
-@register("ff14_logs_query", "YourName", "FF14 Logs 全版本查询", "1.0.0")
+@register("fflogs_query", "YourName", "FF14 Logs 查询", "1.0.0")
 class FF14LogsPlugin(Star):
-    def __init__(self, context: Context, config: dict) -> None:
+    def __init__(self, context: Context, config: dict = None): # 这里加上 = None
         super().__init__(context)
-        self.config = config
+        self.config = config if config else {} # 确保 config 不为 None
         self.token = None
     async def _get_token(self):
         """获取 FFLogs OAuth2 Token"""
