@@ -1,6 +1,16 @@
-name: helloworld # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
-display_name: helloworld # 用于展示的名字，可以是方便人类阅读的名字（需要版本 >= v4.5.0，低版本不会报错，请放心填写）
-desc: AstrBot 插件示例。 # 插件简短描述
-version: v1.3.0 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Soulter # 作者
-repo: https://github.com/Soulter/helloworld # 插件的仓库地址
+name: ff14_logs_query
+display_name: FF14 Logs 全版本查询
+description: 查询 FF14 角色 5.0-7.0 全版本绝本与零式战绩，支持 7.0 归档区数据穿透。
+author: YourName
+version: 1.0.0
+repo: https://github.com/YourName/astrbot_plugin_ff14logs
+# 配置项定义：用户在 WebUI 填写的 Key 会保存在这里
+config_schema:
+  client_id:
+    type: string
+    description: "FFLogs API Client ID (从 fflogs.com/api/clients 申请)"
+    default: ""
+  client_secret:
+    type: string
+    description: "FFLogs API Client Secret"
+    default: ""s
