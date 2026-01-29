@@ -13,13 +13,14 @@ JOB_MAP = {
     "BlackMage": "黑魔", "Summoner": "召唤", "RedMage": "赤魔", "Pictomancer": "画家"
 }
 
+# 修正后的精准 ID 映射
 BOSS_MAP = {
-    # 7.x 阿卡狄亚 第三阶段 (依据用户请求映射 101-105)
-    105: "M12S本", 104: "M12S门", 103: "M11S", 102: "M10S", 101: "M9S",
-    # 7.x 阿卡狄亚 第二阶段 (依据用户请求映射 97-100)
-    100: "M8S", 99: "M7S", 98: "M6S", 97: "M5S",
-    # 7.x 阿卡狄亚 第一阶段 (标准 ID 93-96)
-    96: "M4S", 95: "M3S", 94: "M2S", 93: "M1S",
+    # 7.x 阿卡狄亚 (重量级零式) - 网页对应关系
+    105: "M4S本体", # 林德布鲁姆 II
+    104: "M4S门神", # 林德布鲁姆
+    103: "M3S",    # 霸王
+    102: "M2S",    # 极限兄弟
+    101: "M1S",    # 致命美人
     
     # 6.x 万魔殿
     92: "P12S本", 91: "P12S门", 90: "P11S", 89: "P10S",
@@ -30,7 +31,7 @@ BOSS_MAP = {
     1077: "绝伊甸", 1068: "绝欧", 1065: "绝龙诗", 1062: "绝亚", 1061: "绝神兵", 1060: "绝巴哈"
 }
 
-@register("fflogs_query", "YourName", "FF14 Logs 全版本查询", "1.5.0")
+@register("fflogs_query", "YourName", "FF14 Logs 全版本查询", "1.6.0")
 class FF14LogsPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -53,19 +54,18 @@ class FF14LogsPlugin(Star):
 
     @filter.command("fflogs")
     async def fflogs(self, event: AstrMessageEvent, r_name: str, s_name: str):
-        yield event.plain_result(f"🔍 正在检索 {r_name}@{s_name} 的全版本档案...")
+        yield event.plain_result(f"🔍 正在检索 {r_name}@{s_name} 的档案...")
         
         try:
             if not self.token or time.time() > self.token_expiry:
                 await self._get_token()
 
+            # 只查询包含 Savage 难度的 Zone
             query = """
             query ($name: String, $server: String, $region: String) {
               characterData {
                 character(name: $name, serverSlug: $server, serverRegion: $region) {
-                  s7x_3: zoneRankings(zoneID: 71, difficulty: 101)
-                  s7x_2: zoneRankings(zoneID: 68, difficulty: 101)
-                  s7x_1: zoneRankings(zoneID: 63, difficulty: 101)
+                  s7x: zoneRankings(zoneID: 63, difficulty: 101)
                   s6x_3: zoneRankings(zoneID: 54, difficulty: 101)
                   s6x_2: zoneRankings(zoneID: 49, difficulty: 101)
                   s6x_1: zoneRankings(zoneID: 44, difficulty: 101)
@@ -96,6 +96,7 @@ class FF14LogsPlugin(Star):
                         name = BOSS_MAP[bid]
                         percent = float(r.get("rankPercent", 0) or 0)
                         job = JOB_MAP.get(r.get("spec", ""), r.get("spec", ""))
+                        # 取该副本最好的职业战绩
                         if name not in results or percent > results[name]['p']:
                             results[name] = {"p": percent, "j": job}
 
@@ -113,13 +114,16 @@ class FF14LogsPlugin(Star):
                 line = get_line(u)
                 if line: msg.append(line)
 
-            # 2. 7.x 阿卡狄亚 (分段显示)
+            # 2. 7.x 阿卡狄亚 (当前层)
             msg.append("\n【7.x 阿卡狄亚】")
-            s7x_order = ["M12S本", "M12S门", "M11S", "M10S", "M9S", "M8S", "M7S", "M6S", "M5S", "M4S", "M3S", "M2S", "M1S"]
+            s7x_order = ["M4S本体", "M4S门神", "M3S", "M2S", "M1S"]
+            has_s7 = False
             for s in s7x_order:
                 line = get_line(s)
-                if line: msg.append(line)
-            if not any(results.get(s) for s in s7x_order): msg.append("  暂无记录")
+                if line: 
+                    msg.append(line)
+                    has_s7 = True
+            if not has_s7: msg.append("  暂无记录")
 
             # 3. 6.x 万魔殿
             msg.append("\n【6.x 万魔殿】")
