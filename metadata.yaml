@@ -1,6 +1,6 @@
 name: astrbot_plugin_fflogs
 desc: FF14 Logs 全版本查询插件
 help: 使用 /fflogs [角色名] [服务器名] 查询战绩
-version: v1.2.0
+version: v1.3.0
 author: RyanVaderAN
 repo: https://github.com/674537331/astrbot_plugin_fflogs
