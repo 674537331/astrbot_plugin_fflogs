@@ -14,18 +14,19 @@ JOB_MAP = {
 }
 
 BOSS_MAP = {
-    # 7.0 阿卡狄亚 (新增 M9S-M12S)
-    105: "M12S本", 104: "M12S门", 103: "M11S", 102: "M10S", 101: "M9S",
-    93: "M1S", 94: "M2S", 95: "M3S", 96: "M4S",
-    # 6.0 万魔殿
-    89: "P9S", 90: "P10S", 91: "P11S", 92: "P12S",
-    84: "P5S", 85: "P6S", 86: "P7S", 87: "P8S",
-    79: "P1S", 80: "P2S", 81: "P3S", 82: "P4S",
-    # 绝境战
+    # 7.0 阿卡狄亚 (Arcadion)
+    105: "M12S", 104: "M12S-门", 103: "M11S", 102: "M10S", 101: "M9S",
+    100: "M8S", 99: "M7S", 98: "M6S", 97: "M5S",
+    96: "M4S", 95: "M3S", 94: "M2S", 93: "M1S",
+    # 6.0 万魔殿 (Pandæmonium)
+    92: "P12S", 91: "P11S", 90: "P10S", 89: "P9S", 
+    87: "P8S", 86: "P7S", 85: "P6S", 84: "P5S",
+    82: "P4S", 81: "P3S", 80: "P2S", 79: "P1S",
+    # 绝境战 (Ultimates)
     1077: "绝伊甸", 1068: "绝欧", 1065: "绝龙诗", 1062: "绝亚", 1061: "绝神兵", 1060: "绝巴哈"
 }
 
-@register("fflogs_query", "YourName", "FF14 Logs 全版本查询", "1.3.0")
+@register("fflogs_query", "YourName", "FF14 Logs 全版本查询", "1.3.1")
 class FF14LogsPlugin(Star):
     def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
@@ -34,20 +35,14 @@ class FF14LogsPlugin(Star):
         self.token_expiry = 0
 
     async def _get_token(self):
-        """获取并更新 FFLogs OAuth2 Token"""
         cid = self.config.get("client_id", "").strip()
         secret = self.config.get("client_secret", "").strip()
-        
         if not cid or not secret or "获取" in cid:
             raise ValueError("请在插件设置中填写正确的 Client ID 和 Secret。")
-        
+      
         url = "https://cn.fflogs.com/oauth/token"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.post(
-                url, 
-                data={"grant_type": "client_credentials"}, 
-                auth=(cid, secret)
-            )
+            res = await client.post(url, data={"grant_type": "client_credentials"}, auth=(cid, secret))
             res.raise_for_status()
             data = res.json()
             self.token = data.get("access_token")
@@ -58,21 +53,22 @@ class FF14LogsPlugin(Star):
     async def fflogs(self, event: AstrMessageEvent, r_name: str, s_name: str):
         '''查询 FF14 战绩。用法: /fflogs 角色名 服务器名'''
         yield event.plain_result(f"🔍 正在检索 {r_name}@{s_name} 的全版本档案...")
-        
+      
         try:
             if not self.token or time.time() > self.token_expiry:
                 await self._get_token()
 
-            # GraphQL 查询语句：增加了 zoneID 71 (M9-12) 和 zoneID 62 (部分国服分区的 M1-4)
+            # --- 更新点：增加了 zoneID: 73 (M9-M12) 和 zoneID: 68 (M5-M8) ---
             query = """
             query ($name: String, $server: String, $region: String) {
               characterData {
                 character(name: $name, serverSlug: $server, serverRegion: $region) {
-                  s71: zoneRankings(zoneID: 71, difficulty: 101)
-                  s70: zoneRankings(zoneID: 63, difficulty: 101)
-                  s64: zoneRankings(zoneID: 54, difficulty: 101)
-                  s62: zoneRankings(zoneID: 49, difficulty: 101)
-                  s60: zoneRankings(zoneID: 44, difficulty: 101)
+                  s73: zoneRankings(zoneID: 73, difficulty: 101)
+                  s68: zoneRankings(zoneID: 68, difficulty: 101)
+                  s63: zoneRankings(zoneID: 63, difficulty: 101)
+                  s54: zoneRankings(zoneID: 54, difficulty: 101)
+                  s49: zoneRankings(zoneID: 49, difficulty: 101)
+                  s44: zoneRankings(zoneID: 44, difficulty: 101)
                   u_6x: zoneRankings(zoneID: 62)
                   u_5x: zoneRankings(zoneID: 53)
                   u_4x: zoneRankings(zoneID: 45)
@@ -81,20 +77,15 @@ class FF14LogsPlugin(Star):
               }
             }
             """
-            
+          
             headers = {"Authorization": f"Bearer {self.token}"}
             async with httpx.AsyncClient(timeout=25.0) as client:
-                payload = {
-                    "query": query, 
-                    "variables": {"name": r_name, "server": s_name, "region": "CN"}
-                }
+                payload = {"query": query, "variables": {"name": r_name, "server": s_name, "region": "CN"}}
                 res = await client.post("https://cn.fflogs.com/api/v2/client", json=payload, headers=headers)
-                
                 if res.status_code == 401:
                     self.token = None
-                    yield event.plain_result("❌ 认证失效，请重新尝试查询。")
+                    yield event.plain_result("❌ 认证失效，请重新尝试。")
                     return
-                    
                 res.raise_for_status()
                 data = res.json()
 
@@ -105,8 +96,7 @@ class FF14LogsPlugin(Star):
 
             results = {}
             for zone in char.values():
-                if not zone or "rankings" not in zone:
-                    continue
+                if not zone or "rankings" not in zone: continue
                 for r in zone["rankings"]:
                     bid = r.get("encounter", {}).get("id")
                     if bid in BOSS_MAP:
@@ -115,40 +105,33 @@ class FF14LogsPlugin(Star):
                         percent = float(raw_p) if raw_p is not None else 0.0
                         spec_name = r.get("spec", "")
                         job = JOB_MAP.get(spec_name, spec_name)
-                        
                         if name not in results or percent > results[name]['p']:
                             results[name] = {"p": percent, "j": job}
 
             msg = [f"📊 FFLogs 战绩: {r_name} @ {s_name}"]
-            
             def get_line(name):
                 if name in results:
                     res = results[name]
-                    return f"  {name.ljust(6)}: {res['p']:>4.1f} ({res['j']})"
+                    return f"  {name.ljust(8)}: {res['p']:>4.1f} ({res['j']})"
                 return None
 
-            # 1. 绝境战
             msg.append("\n【绝境战】")
             u_list = ["绝伊甸", "绝欧", "绝龙诗", "绝亚", "绝神兵", "绝巴哈"]
             u_lines = [get_line(u) for u in u_list if get_line(u)]
             msg.extend(u_lines if u_lines else ["  暂无记录"])
 
-            # 2. 7.0 阿卡狄亚 (已更新包含 M9-M12)
             msg.append("\n【7.0 阿卡狄亚】")
-            s70_list = ["M12S本", "M12S门", "M11S", "M10S", "M9S", "M4S", "M3S", "M2S", "M1S"]
+            # 这里的顺序是显示顺序，M12S 在最上方
+            s70_list = ["M12S", "M12S-门", "M11S", "M10S", "M9S", "M8S", "M7S", "M6S", "M5S", "M4S", "M3S", "M2S", "M1S"]
             s70_lines = [get_line(b) for b in s70_list if get_line(b)]
             msg.extend(s70_lines if s70_lines else ["  暂无记录"])
 
-            # 3. 6.0 万魔殿
             msg.append("\n【6.0 万魔殿】")
             s60_all = ["P12S", "P11S", "P10S", "P9S", "P8S", "P7S", "P6S", "P5S", "P4S", "P3S", "P2S", "P1S"]
             s60_lines = [get_line(b) for b in s60_all if get_line(b)]
             msg.extend(s60_lines if s60_lines else ["  暂无记录"])
 
             yield event.plain_result("\n".join(msg))
-        except httpx.HTTPError as e:
-            logger.error(f"FFLogs 网络请求失败: {e}")
-            yield event.plain_result(f"❌ 网络连接失败。")
         except Exception as e:
-            logger.error(f"FFLogs 错误: {e}", exc_info=True)
+            logger.error(f"FFLogs出错: {e}", exc_info=True)
             yield event.plain_result(f"❌ 查询出错: {str(e)}")
