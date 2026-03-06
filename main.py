@@ -26,7 +26,7 @@ BOSS_MAP = {
 }
 
 # 国服四大区名称列表
-CN_DCS = ["陆行鸟", "莫古力", "猫区", "豆豆柴"]
+CN_DCS = ["陆行鸟", "莫古力", "猫小胖", "豆豆柴"]
 
 @register("fflogs_query", "YourName", "FF14 Logs与物价查询", "1.4.0")
 class FF14LogsPlugin(Star):
