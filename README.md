@@ -1,5 +1,5 @@
 # AstrBot FFLogs 查询插件
-一个为 AstrBot [<sup>1</sup>](https://github.com/Soulter/AstrBot) 设计的 Final Fantasy XIV 战绩查询插件。支持通过 FFLogs API 获取 5.0 - 7.0 版本的绝本与零式副本数据。
+一个为 AstrBot [<sup>1</sup>](https://github.com/Soulter/AstrBot) 设计的 Final Fantasy XIV logs和universalis物价查询功能查询插件。支持通过 FFLogs API 获取 5.0 - 7.0 版本的绝本与零式副本数据。
  ![<sup>1</sup>](https://cdn.jsdelivr.net/gh/674537331/astrbot_plugin_fflogs@master/docs/1.jpg)
  ## 🚀 v1.4.0 更新内容
 
