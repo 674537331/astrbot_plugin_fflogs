@@ -1,6 +1,9 @@
 name: astrbot_plugin_fflogs
-desc: FF14 Logs 全版本查询插件
-help: 使用 /fflogs [角色名] [服务器名] 查询战绩
-version: v1.3.0
+desc: FF14 Logs 全版本查询与物价查板插件
+help: |
+  1. 使用 /fflogs [角色名] [服务器名] 查询战绩。
+  2. 使用 /ff14 [物品名] 查询全大区最低物价。
+  3. 支持直接跟机器人说：“帮我查一下白银乡扁扁走开的logs”
+version: v1.5.0
 author: RyanVaderAN
 repo: https://github.com/674537331/astrbot_plugin_fflogs
