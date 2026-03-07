@@ -1,214 +1,227 @@
-# -*- coding: utf-8 -*-
-import io
+import httpx
+import time
 import asyncio
-import hashlib
-from PIL import Image, UnidentifiedImageError
-from astrbot.api.event import filter, AstrMessageEvent
+import urllib.parse
 from astrbot.api.star import Context, Star, register
-from astrbot.api.provider import ProviderRequest
-import astrbot.api.message_components as Comp
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api import logger
 
-from .scraper import fetch_image_urls, fetch_bing_image_urls, close_browser, close_scraper_session
-from .composer import download_image_batch, create_collage_from_items, close_composer_session
-from .vlm import select_best_image_index
+# --- 1. 常量定义 ---
+JOB_MAP = {
+    "Paladin": "骑士", "Warrior": "战士", "DarkKnight": "暗骑", "Gunbreaker": "绝枪",
+    "WhiteMage": "白魔", "Scholar": "学者", "Astrologian": "占星", "Sage": "贤者",
+    "Monk": "武僧", "Dragoon": "龙骑", "Ninja": "忍者", "Samurai": "武士", "Reaper": "钐镰", "Viper": "蛇镰",
+    "Bard": "诗人", "Machinist": "机工", "Dancer": "舞者",
+    "BlackMage": "黑魔", "Summoner": "召唤", "RedMage": "赤魔", "Pictomancer": "画家"
+}
 
-SUPPLEMENT_THRESHOLD_RATIO = 0.3
-JPEG_QUALITY = 85  # 适当调低质量以确保最终体积适合平台发送
-MAX_BATCH_SIZE = 36  
+BOSS_MAP = {
+    105: "M12S", 104: "M12S-门", 103: "M11S", 102: "M10S", 101: "M9S",
+    100: "M8S", 99: "M7S", 98: "M6S", 97: "M5S",
+    96: "M4S", 95: "M3S", 94: "M2S", 93: "M1S",
+    92: "P12S", 91: "P11S", 90: "P10S", 89: "P9S", 
+    87: "P8S", 86: "P7S", 85: "P6S", 84: "P5S",
+    82: "P4S", 81: "P3S", 80: "P2S", 79: "P1S",
+    1077: "绝伊甸", 1068: "绝欧", 1065: "绝龙诗", 1062: "绝亚", 1061: "绝神兵", 1060: "绝巴哈"
+}
 
-@register("astrbot_plugin_soutushenqi", "YourName", "智能搜图与比对插件(完全体)", "v5.2.0")
-class SouTuShenQiPlugin(Star):
-    def __init__(self, context: Context, config: dict):
+# 国服四大区名称列表
+CN_DCS = ["陆行鸟", "莫古力", "猫小胖", "豆豆柴"]
+
+@register("fflogs_query", "YourName", "FF14 Logs与物价查询", "1.4.0")
+class FF14LogsPlugin(Star):
+    def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
-        self.config = config
+        self.config = config if config else {}
+        self.token = None
+        self.token_expiry = 0
 
-    async def terminate(self):
-        await close_browser()
-        await close_scraper_session()
-        await close_composer_session()
-        logger.info("SouTuShenQi 插件资源回收完毕。")
-
-    async def _get_vlm_provider(self, event: AstrMessageEvent):
-        provider_id = self.config.get("vlm_provider_id", "")
-        if provider_id:
-            provider = self.context.get_provider_by_id(provider_id)
-            if provider:
-                return provider
+    # ========================== FFLogs 战绩部分 ==========================
+    async def _get_token(self):
+        cid = self.config.get("client_id", "").strip()
+        secret = self.config.get("client_secret", "").strip()
+        if not cid or not secret or "获取" in cid:
+            raise ValueError("请在插件设置中填写正确的 Client ID 和 Secret。")
         
-        umo = getattr(event, "unified_msg_origin", None)
-        if umo:
-            curr_id = await self.context.get_current_chat_provider_id(umo)
-            if curr_id:
-                provider = self.context.get_provider_by_id(curr_id)
-                if provider:
-                    return provider
-                
-        return getattr(self.context, 'llm', None)
+        url = "https://cn.fflogs.com/oauth/token"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(url, data={"grant_type": "client_credentials"}, auth=(cid, secret))
+            res.raise_for_status()
+            data = res.json()
+            self.token = data.get("access_token")
+            self.token_expiry = time.time() + data.get("expires_in", 86400) - 60
+            logger.info("FFLogs Token 已更新")
 
-    def _calculate_hashes_sync(self, items: list[tuple[str, bytes]]) -> set:
-        """在线程池中计算 MD5，防阻塞"""
-        return {hashlib.md5(b).hexdigest() for _, b in items}
+    async def _do_fflogs_query(self, r_name: str, s_name: str) -> str:
+        """核心 Logs 查询与排版逻辑提取"""
+        try:
+            if not self.token or time.time() > self.token_expiry:
+                await self._get_token()
 
-    async def _ensure_minimum_images(self, keyword: str, batch_size: int) -> list[tuple[str, bytes]]:
-        batch_size = min(batch_size, MAX_BATCH_SIZE)
-        threshold = batch_size * SUPPLEMENT_THRESHOLD_RATIO  
+            query = """
+            query ($name: String, $server: String, $region: String) {
+              characterData {
+                character(name: $name, serverSlug: $server, serverRegion: $region) {
+                  s73: zoneRankings(zoneID: 73, difficulty: 101)
+                  s68: zoneRankings(zoneID: 68, difficulty: 101)
+                  s63: zoneRankings(zoneID: 63, difficulty: 101)
+                  s54: zoneRankings(zoneID: 54, difficulty: 101)
+                  s49: zoneRankings(zoneID: 49, difficulty: 101)
+                  s44: zoneRankings(zoneID: 44, difficulty: 101)
+                  u_6x: zoneRankings(zoneID: 62)
+                  u_5x: zoneRankings(zoneID: 53)
+                  u_4x: zoneRankings(zoneID: 45)
+                  u_3x: zoneRankings(zoneID: 43)
+                }
+              }
+            }
+            """
+            headers = {"Authorization": f"Bearer {self.token}"}
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                payload = {"query": query, "variables": {"name": r_name, "server": s_name, "region": "CN"}}
+                res = await client.post("https://cn.fflogs.com/api/v2/client", json=payload, headers=headers)
+                if res.status_code == 401:
+                    self.token = None
+                    return "❌ 认证失效，请重新尝试。"
+                res.raise_for_status()
+                data = res.json()
+
+            char = data.get("data", {}).get("characterData", {}).get("character")
+            if not char:
+                return f"❌ 未找到角色: {r_name} @ {s_name}"
+
+            results = {}
+            for zone in char.values():
+                if not zone or "rankings" not in zone: continue
+                for r in zone["rankings"]:
+                    bid = r.get("encounter", {}).get("id")
+                    if bid in BOSS_MAP:
+                        name = BOSS_MAP[bid]
+                        raw_p = r.get("rankPercent")
+                        percent = float(raw_p) if raw_p is not None else 0.0
+                        spec_name = r.get("spec", "")
+                        job = JOB_MAP.get(spec_name, spec_name)
+                        if name not in results or percent > results[name]['p']:
+                            results[name] = {"p": percent, "j": job}
+
+            msg = [f"📊 FFLogs 战绩: {r_name} @ {s_name}"]
+            def get_line(name):
+                if name in results:
+                    res = results[name]
+                    return f"  {name.ljust(8)}: {res['p']:>4.1f} ({res['j']})"
+                return None
+
+            msg.append("\n【绝境战】")
+            u_list = ["绝伊甸", "绝欧", "绝龙诗", "绝亚", "绝神兵", "绝巴哈"]
+            u_lines = [get_line(u) for u in u_list if get_line(u)]
+            msg.extend(u_lines if u_lines else ["  暂无记录"])
+
+            msg.append("\n【7.0 阿卡狄亚】")
+            s70_list = ["M12S", "M12S-门", "M11S", "M10S", "M9S", "M8S", "M7S", "M6S", "M5S", "M4S", "M3S", "M2S", "M1S"]
+            s70_lines = [get_line(b) for b in s70_list if get_line(b)]
+            msg.extend(s70_lines if s70_lines else ["  暂无记录"])
+
+            msg.append("\n【6.0 万魔殿】")
+            s60_all = ["P12S", "P11S", "P10S", "P9S", "P8S", "P7S", "P6S", "P5S", "P4S", "P3S", "P2S", "P1S"]
+            s60_lines = [get_line(b) for b in s60_all if get_line(b)]
+            msg.extend(s60_lines if s60_lines else ["  暂无记录"])
+
+            return "\n".join(msg)
+        except Exception as e:
+            logger.error(f"FFLogs出错: {e}", exc_info=True)
+            return f"❌ 查询出错: {str(e)}"
+
+    @filter.command("fflogs")
+    async def cmd_fflogs(self, event: AstrMessageEvent, r_name: str, s_name: str):
+        '''查询 FF14 战绩。用法: /fflogs 角色名 服务器名'''
+        yield event.plain_result(f"🔍 正在检索 {r_name}@{s_name} 的全版本档案...")
+        result_msg = await self._do_fflogs_query(r_name, s_name)
+        yield event.plain_result(result_msg)
+
+    # 通过这个装饰器，向大模型暴露工具
+    @filter.llm_tool(name="search_fflogs")
+    async def tool_fflogs(self, event: AstrMessageEvent, character_name: str, server_name: str):
+        '''用于查询FF14玩家的Logs战绩。
+        Args:
+            character_name(string): 玩家的角色名，如"冰冷"
+            server_name(string): 玩家所在的服务器名，如"白银乡"
+        '''
+        # 提前向用户发送等待提示（使用直接 send）
+        await event.send(event.plain_result(f"🔍 收到自然语言请求，正在检索 {character_name}@{server_name} 的战绩..."))
         
-        urls, _ = await fetch_image_urls(keyword, batch_size)
-        items = await download_image_batch(urls)
-        logger.info(f"主来源下载完成，存活 {len(items)} 张。")
-
-        if len(items) < threshold:
-            logger.warning(f"主图源可用率低，启动 Bing 混合补充...")
-            bing_urls = await fetch_bing_image_urls(keyword, batch_size)
-            bing_items = await download_image_batch(bing_urls)
-            
-            seen_urls = {u for u, _ in items}
-            loop = asyncio.get_running_loop()
-            seen_hashes = await loop.run_in_executor(None, self._calculate_hashes_sync, items)
-            
-            new_bing_items = []
-            for u, b in bing_items:
-                if u not in seen_urls:
-                    # 避免阻塞，单次哈希较轻量直接执行
-                    b_hash = hashlib.md5(b).hexdigest()
-                    if b_hash not in seen_hashes:
-                        new_bing_items.append((u, b))
-                        seen_hashes.add(b_hash)
-            
-            items = (items + new_bing_items)[:batch_size]
-            logger.info(f"混合补充完毕，最终参与比对数: {len(items)}")
-            
-        return items
-
-    async def _vlm_selection(self, event: AstrMessageEvent, items: list[tuple[str, bytes]], eval_desc: str) -> tuple[str, bytes, str]:
-        collage_bytes, valid_items = await create_collage_from_items(items)
-        if not collage_bytes or not valid_items:
-            return "", b"", "图片拼合处理失败，可用图片的数据均已损坏。"
-            
-        vlm_provider = await self._get_vlm_provider(event)
-        if vlm_provider:
-            logger.info(f"开始大模型淘汰比对 ({len(valid_items)} 选 1)...")
-            best_idx = await select_best_image_index(vlm_provider, collage_bytes, eval_desc, len(valid_items))
-            
-            if best_idx == -1:
-                return "", b"", "检索到的图片均与要求无关，为保证质量已拦截。"
-                
-            final_url, final_bytes = valid_items[best_idx]
-            logger.info(f"VLM优胜决定：{final_url}")
-            return final_url, final_bytes, ""
-        else:
-            return valid_items[0][0], valid_items[0][1], ""
-
-    def _format_image_sync(self, img_bytes: bytes) -> bytes:
-        try:
-            with io.BytesIO(img_bytes) as img_io:
-                img = Image.open(img_io)
-                
-                # 🚀 修复：无论原格式是什么，统一强制转码为 JPEG 以降低发图带宽并防御恶意的巨型 PNG 🚀
-                if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                    try:
-                        img = img.convert('RGBA')
-                        bg = Image.new("RGB", img.size, (255, 255, 255))
-                        bg.paste(img, mask=img.split()[3])
-                        img = bg
-                    except Exception as alpha_e:
-                        logger.debug(f"Alpha 通道复合失败，降级转换: {alpha_e}")
-                        img = img.convert("RGB")
-                else:
-                    img = img.convert("RGB")
-                    
-                with io.BytesIO() as buf:
-                    img.save(buf, format="JPEG", quality=JPEG_QUALITY)
-                    final_bytes = buf.getvalue()
-                return final_bytes
-                
-        except UnidentifiedImageError:
-            logger.warning("捕获到 UnidentifiedImageError，图片文件损坏。")
-            return img_bytes
-        except OSError as e:
-            logger.warning(f"图片转码发生IO格式错误: {e}")
-            return img_bytes
-        except Exception as e:
-            logger.error(f"图片转码发生严重错误: {e}", exc_info=True)
-            return img_bytes
-
-    async def _format_image(self, img_bytes: bytes) -> bytes:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._format_image_sync, img_bytes)
-
-    async def _process_image_search(self, event: AstrMessageEvent, keyword: str, description: str, use_vlm_selection: bool) -> tuple[bytes | None, str]:
-        batch_size = min(self.config.get("batch_size", 16), MAX_BATCH_SIZE)
-        eval_desc = description if description else keyword
-        logger.info(f"发起搜图: [{keyword}], VLM比对: {use_vlm_selection}")
+        # 执行查询
+        result_msg = await self._do_fflogs_query(character_name, server_name)
         
-        items = await self._ensure_minimum_images(keyword, batch_size)
-        if not items:
-            return None, "所有的图片渠道均触发强力防盗链或失效，无一可用。"
+        # 将完整结果发给用户
+        await event.send(event.plain_result(result_msg))
+        
+        # 告诉大模型结果已经发送了，避免它长篇大论复读格式
+        return "查询结果已经直接发送给用户了。请你简单回复一句话告知用户查询完毕即可，不要重复输出查询战绩。"
 
-        final_bytes = b""
-        if use_vlm_selection and len(items) > 1:
-            _, final_bytes, err_msg = await self._vlm_selection(event, items, eval_desc)
-            if not final_bytes:
-                return None, err_msg
-        else:
-            final_url, final_bytes = items[0]
-            logger.info(f"跳过VLM，直接返回首张图：{final_url}")
+    # ========================== Universalis 查价部分 ==========================
+    async def _search_item_id(self, item_name: str):
+        """利用国服版 XIVAPI (cafemaker) 模糊检索物品 ID"""
+        url = f"https://cafemaker.wakingsands.com/search?indexes=Item&string={urllib.parse.quote(item_name)}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                res = await client.get(url)
+                if res.status_code == 200:
+                    data = res.json()
+                    results = data.get("Results", [])
+                    if results:
+                        # 尝试精确匹配名字
+                        for item in results:
+                            if item.get("Name", "").lower() == item_name.lower():
+                                return item.get("ID"), item.get("Name")
+                        # 没有精确匹配就返回第一个搜索结果
+                        return results[0].get("ID"), results[0].get("Name")
+            except Exception as e:
+                logger.error(f"请求物品ID失败: {e}")
+        return None, None
 
-        final_bytes = await self._format_image(final_bytes)
-        return final_bytes, ""
+    async def _get_dc_lowest_price(self, item_id: int, dc: str):
+        """请求单个大区的最低价 (listings=1 确保服务器只返回最便宜的那条数据)"""
+        url = f"https://universalis.app/api/v2/{urllib.parse.quote(dc)}/{item_id}?listings=1"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                res = await client.get(url)
+                if res.status_code == 200:
+                    data = res.json()
+                    listings = data.get("listings", [])
+                    if listings:
+                        listing = listings[0]
+                        return {
+                            "price": listing.get("pricePerUnit"),
+                            "world": listing.get("worldName", "未知"),
+                            "quantity": listing.get("quantity", 0),
+                            "hq": listing.get("hq", False)
+                        }
+            except Exception as e:
+                logger.error(f"获取 {dc} 物价失败: {e}")
+        return None
 
-    @filter.command("搜图")
-    async def cmd_search_image(self, event: AstrMessageEvent, keyword: str, description: str = ""):
-        try:
-            use_vlm = self.config.get("enable_cmd_vlm_selection", True)
-            yield event.plain_result(f"正在处理搜图请求 [{keyword}]...")
-            
-            img_bytes, err_msg = await self._process_image_search(event, keyword, description, use_vlm)
-            if img_bytes:
-                yield event.chain_result([Comp.Image.fromBytes(img_bytes)])
+    @filter.command("ff14")
+    async def cmd_ff14_price(self, event: AstrMessageEvent, item_name: str):
+        '''查询 FF14 物品大区最低价。用法: /ff14 物品名'''
+        yield event.plain_result(f"🔍 正在寻找物品 [{item_name}]...")
+        
+        item_id, real_name = await self._search_item_id(item_name)
+        if not item_id:
+            yield event.plain_result(f"❌ 未找到物品: {item_name}，请检查错别字。")
+            return
+
+        yield event.plain_result(f"📦 确认物品: {real_name} (ID: {item_id})\n正在并发查询各大区物价...")
+
+        # 利用协程并发，一次性向 Universalis 索要四大区数据，大幅提高速度
+        tasks = [self._get_dc_lowest_price(item_id, dc) for dc in CN_DCS]
+        results = await asyncio.gather(*tasks)
+
+        msg = [f"💰 【{real_name}】 全大区最低价一览:"]
+        for dc, res in zip(CN_DCS, results):
+            if res:
+                hq_mark = " (HQ)" if res["hq"] else ""
+                msg.append(f"[{dc}] {res['price']} 金币 @ {res['world']} x{res['quantity']}{hq_mark}")
             else:
-                yield event.plain_result(f"搜图失败: {err_msg}")
-        except Exception as e:
-            logger.error(f"指令搜图管线崩溃: {e}", exc_info=True)
-            yield event.plain_result(f"抱歉，搜图执行期间发生系统错误: {str(e)}")
+                msg.append(f"[{dc}] 暂无在售")
 
-    @filter.llm_tool(name="search_image_tool")
-    async def tool_search_image(self, event: AstrMessageEvent, keyword: str, description: str = "", is_explanation: bool = False):
-        try:
-            if is_explanation:
-                use_vlm = self.config.get("enable_explanation_vlm_selection", False)
-            else:
-                use_vlm = self.config.get("enable_nl_search_vlm_selection", True)
-                
-            img_bytes, err_msg = await self._process_image_search(event, keyword, description, use_vlm)
-            
-            if img_bytes:
-                message_result = event.make_result()
-                message_result.chain = [Comp.Image.fromBytes(img_bytes)]
-                await event.send(message_result) 
-                
-                if is_explanation:
-                    return f"图片已成功发送！请立刻开始向用户详细解释什么是 {keyword}。"
-                else:
-                    return "图片已发送！简单回复一句搜图完成的话语即可。"
-            else:
-                return f"系统搜图失败: {err_msg}。"
-        except Exception as e:
-            logger.error(f"工具搜图管线崩溃: {e}", exc_info=True)
-            return "系统错误导致搜图中断，请向用户致歉。"
-
-    @filter.on_llm_request()
-    async def inject_explanation_instruction(self, event: AstrMessageEvent, req: ProviderRequest):
-        if self.config.get("enable_explanation_image", True):
-            instruction = (
-                "\n【🔴 致命红线警告：搜图行为规范 🔴】\n"
-                "当用户要求搜图、找图、看图时，你【必须直接且仅使用】名为 `search_image_tool` 的 Function Tool。\n"
-                "【绝对禁止以下违规行为】：\n"
-                "1. 严禁使用 `astrbot_execute_ipython` 写代码搜图！\n"
-                "2. 严禁使用 `astrbot_execute_shell` 搜图！\n"
-                "3. 严禁你自己捏造或输出带有 [CQ:image,file=...] 或 Markdown 的虚假链接！\n"
-                "你只需要在后台调用 `search_image_tool` 工具即可。"
-            )
-            if instruction not in req.system_prompt:
-                req.system_prompt += instruction
+        yield event.plain_result("\n".join(msg))
