@@ -1,6 +1,13 @@
 # AstrBot FFLogs 查询插件
 一个为 AstrBot [<sup>1</sup>](https://github.com/Soulter/AstrBot) 设计的 Final Fantasy XIV logs和universalis物价查询功能查询插件。支持通过 FFLogs API 获取 5.0 - 7.0 版本的绝本与零式副本数据。
 ![效果图](https://raw.githubusercontent.com/674537331/astrbot_plugin_fflogs/master/docs/1.jpg)
+
+<div align="center">
+
+[![Moe Counter](https://count.getloli.com/get/@astrbot_plugin_fflogs?theme=moebooru)](https://github.com/674537331/astrabot_plugin_discogs)
+
+</div>
+
  ## 🚀 v1.4.0 更新内容
 
 本次更新带来了重磅的 **物价查询功能** 以及更智能的 **自然语言交互** 支持！
