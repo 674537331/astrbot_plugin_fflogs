@@ -10,5 +10,23 @@
     "type": "string",
     "hint": "在 https://www.fflogs.com/api/clients/ 获取",
     "default": ""
+  },
+  "proxy_url": {
+    "description": "插件请求代理地址",
+    "type": "string",
+    "hint": "可选。留空则不使用代理，例如 http://127.0.0.1:7890",
+    "default": ""
+  },
+  "news_count": {
+    "description": "最新官方情报显示条数",
+    "type": "int",
+    "hint": "用于 /ff14news，范围 1-20，默认 5",
+    "default": 5
+  },
+  "show_low_impact_maintenance": {
+    "description": "显示一般/低影响维护公告",
+    "type": "bool",
+    "hint": "默认关闭。开启后 /ff14maint 会显示不一定影响登录的维护、网络调整和线路优化公告",
+    "default": false
   }
 }
