@@ -56,7 +56,7 @@ FFLogs 查询仍需在 [FFLogs API Clients](https://www.fflogs.com/api/clients/)
 
 - Wiki 主端点为 `ff14.huijiwiki.com/w/api.php`，备用端点为 `cdn.huijiwiki.com/ff14/api.php`。请求带描述性 User-Agent、超时、并发限制和 403/429 退避；失败时优先返回带缓存时间的旧结果。若 Wiki 被 Cloudflare 或网络代理拦截，运行时 Quest.csv（可自动下载并缓存）仍可补充主线任务进度，其他词条只返回候选标题和原文链接。
 - 官方新闻、版本和活动使用国服官网新闻接口；时间未确认、包含 `??` 或“待定”的活动不会进入提醒队列。
-- 主线任务图从国服数据仓库运行时下载 `Quest.csv`，缓存于 `data/plugin_data/astrbot_plugin_fflogs/`，不会提交大型数据文件。任务百分比表示数据图中的顺序位置，不表示账号实际完成度。
+- 主线任务图从国服数据仓库运行时下载 `Quest.csv`，缓存于 `data/plugin_data/astrbot_plugin_fflogs/`，不会提交大型数据文件。插件使用版本化的国服主线终点构建分母，不把 `Type=0` 的支线任务混入主线；结果同时显示所属资料片和主线顺序百分比，不表示账号实际完成度。
 - PvP 轮换使用版本化参考时间、间隔和地图顺序，管理员可以在 `pvp_rotation` 中覆盖；算法设计参考 [ffxiv-wakeng/pvp-calendar](https://github.com/ffxiv-wakeng/pvp-calendar)，没有复制其代码或资源。
 - 时尚评鉴使用公开的社区确认页面。数据源没有确认主题或 80 分方案时，插件不会猜测，并且不会据此创建提醒。
 - 生成的日历/PvP 图片、Wiki缓存、PvP 地图缩略图和 Quest.csv 都位于 AstrBot 插件数据目录，不写入插件源码目录；PvP 周历把缓存图片嵌入最终 PNG，渲染器无法访问外部图片时也不会出现破图标。

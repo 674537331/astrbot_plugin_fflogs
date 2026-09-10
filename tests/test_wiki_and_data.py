@@ -226,6 +226,27 @@ def test_quest_graph_can_provide_progress_from_cached_csv(tmp_path):
     asyncio.run(scenario())
 
 
+def test_quest_graph_uses_versioned_msq_endpoint_and_rejects_side_quests(tmp_path):
+    (tmp_path / "Quest.csv").write_text(
+        "#,Name,Id,Expansion,PreviousQuest[0],Type\n"
+        "1,起点,Root,0,0,0\n"
+        "2,5.0任务,Shadow,3,1,0\n"
+        "70970,当前主线终点,KinGmj109,5,2,0\n"
+        "71014,支线任务,KinGml104,5,2,0\n",
+        encoding="utf-8",
+    )
+
+    async def scenario():
+        service = QuestGraphService({}, tmp_path)
+        progress = await service.progress_for("5.0任务")
+        assert "所属版本：5.0 暗影之逆焰" in progress
+        assert "主线约第 2/3 条" in progress
+        assert "5.0 内约第 1/1 条" in progress
+        assert await service.progress_for("支线任务") == ""
+
+    asyncio.run(scenario())
+
+
 def test_fashion_parser_requires_confirmed_theme_and_80_point_data():
     report = FashionService.parse_html(
         """
