@@ -1,15 +1,17 @@
 name: astrbot_plugin_fflogs
-display_name: FF14 Logs 与国服信息查询
-desc: 查询 FFLogs 战绩、国服物价、服务器状态和官方公告
-short_desc: FFLogs、物价、服务器状态与官方公告一站式查询
+display_name: FF14 助手
+desc: FF14 综合助手，提供 FFLogs、国服物价、服务器状态、公告、Wiki、版本、海钓、时尚评鉴、PvP、活动、日历和可配置主动提醒。
+short_desc: FF14 查询、百科、轮换与活动提醒一站式助手
 help: |
-  1. 使用 /fflogs [角色名] [服务器名] 查询战绩。
-  2. 使用 /ff14 [物品名] 查询全大区最低物价。
-  3. 使用 /ff14status 查询国服服务器状态。
-  4. 使用 /ff14news 查询官网最新情报。
-  5. 使用 /ff14maint 查询正在进行中或已预定的重点维护公告。
-  6. 支持直接跟机器人说：“帮我查一下白银乡扁扁走开的logs”
-version: v1.6.0
+  1. 使用 /ff14 help 或 /ff14helps 查看完整帮助。
+  2. 使用 /ff14 logs 角色名 服务器名 查询 FFLogs；旧版 /fflogs 仍可用。
+  3. 使用 /ff14 price 物品名 查询国服物价；旧版 /ff14 物品名 仍可用。
+  4. 使用 /ff14 status、/ff14 news、/ff14 maint 查询状态、新闻和维护。
+  5. 使用 /ff14 wiki 关键词 查询统一百科，使用 /ff14 wiki #编号 选择候选。
+  6. 使用 /ff14 patch、/ff14 ocean、/ff14 fashion、/ff14 pvp、/ff14 events、/ff14 calendar 查询游戏资料。
+  7. 使用 /ff14 subscribe 和 /ff14 unsubscribe 管理当前会话提醒。
+version: 2.0.0
 author: RyanVaderAN
 repo: https://github.com/674537331/astrbot_plugin_fflogs
-astrbot_version: ">=4.16,<5"
+license: GPL-3.0
+astrbot_version: ">=4.17,<5"

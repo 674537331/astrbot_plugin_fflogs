@@ -60,6 +60,17 @@ class MaintenanceItem:
     end_at: datetime
 
 
+@dataclass(frozen=True)
+class EventItem:
+    title: str
+    url: str
+    category: str
+    date_text: str
+    start_at: datetime | None
+    end_at: datetime | None
+    date_confirmed: bool
+
+
 class FFXIVService:
     def __init__(self, config: Mapping[str, Any]):
         self.config = config
@@ -533,3 +544,139 @@ class FFXIVService:
                 maintenance_items.append(maintenance)
         maintenance_items.sort(key=lambda entry: entry.start_at)
         return self.format_maintenance_list(maintenance_items)
+
+    @staticmethod
+    def _event_category(text: str) -> str | None:
+        if any(keyword in text for keyword in ("周边", "商品", "手办", "销售", "商城")):
+            return None
+        if any(keyword in text for keyword in ("直播", "节目", "直播间")):
+            return None
+        if any(keyword in text for keyword in ("联动", "合作")):
+            return "联动活动"
+        if any(keyword in text for keyword in ("庆典", "季节", "守护神", "新年", "圣诞", "节日")):
+            return "季节活动"
+        if any(keyword in text for keyword in ("活动", "奖励", "登录奖", "兑换")):
+            return "奖励型运营活动"
+        return None
+
+    @classmethod
+    def build_event_item(
+        cls,
+        item: Mapping[str, Any],
+        detail: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> EventItem | None:
+        detail = detail or {}
+        title = str(detail.get("Title") or item.get("Title") or "未命名活动")
+        summary = str(detail.get("Summary") or item.get("Summary") or "")
+        content = cls._plain_text_from_html(str(detail.get("Content") or ""))
+        all_text = f"{title}\n{summary}\n{content}"
+        category = cls._event_category(all_text)
+        if category is None:
+            return None
+        start_at, end_at = cls.parse_maintenance_time(all_text, now)
+        uncertain = bool(re.search(r"\?{2,}|待定|未定|另行通知|时间待确认", all_text))
+        confirmed = bool(start_at and end_at and not uncertain)
+        if confirmed:
+            current = cls._normalize_now(now)
+            if end_at < current or start_at > current + timedelta(days=30):
+                return None
+            date_text = f"{start_at:%Y-%m-%d %H:%M} 至 {end_at:%Y-%m-%d %H:%M}"
+        else:
+            date_text = "时间待确认"
+        source = detail if detail else item
+        return EventItem(
+            title=title,
+            url=cls.official_news_url(source),
+            category=category,
+            date_text=date_text,
+            start_at=start_at if confirmed else None,
+            end_at=end_at if confirmed else None,
+            date_confirmed=confirmed,
+        )
+
+    @staticmethod
+    def _event_enabled(config: Mapping[str, Any], category: str) -> bool:
+        categories = config.get("event_categories")
+        if not isinstance(categories, list):
+            return True
+        return category in {str(value) for value in categories}
+
+    async def _fetch_event_details(
+        self,
+        client: httpx.AsyncClient,
+        items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        semaphore = asyncio.Semaphore(5)
+
+        async def fetch(item: dict[str, Any]) -> dict[str, Any]:
+            news_id = item.get("Id")
+            if not isinstance(news_id, int):
+                return {}
+            async with semaphore:
+                try:
+                    return await self._fetch_news_detail(client, news_id)
+                except Exception as exc:
+                    logger.warning("获取活动公告详情失败 %s: %s", news_id, type(exc).__name__)
+                    return {}
+
+        return await asyncio.gather(*(fetch(item) for item in items))
+
+    async def get_event_items(self, now: datetime | None = None) -> list[EventItem]:
+        async with create_http_client(self.config, timeout=15.0) as client:
+            news_items = await self._fetch_news_list(client, NEWS_CATEGORY_CODES, 60)
+            candidates = []
+            for item in news_items:
+                title_text = f"{item.get('Title', '')} {item.get('Summary', '')}"
+                if self._event_category(title_text) is not None:
+                    candidates.append(item)
+            details = await self._fetch_event_details(client, candidates[:20])
+        events = []
+        for item, detail in zip(candidates[:20], details, strict=True):
+            event = self.build_event_item(item, detail, now)
+            if event and self._event_enabled(self.config, event.category):
+                events.append(event)
+        events.sort(key=lambda event: event.start_at or datetime.max.replace(tzinfo=CHINA_TZ))
+        return events[:6]
+
+    @staticmethod
+    def format_events(events: list[EventItem]) -> str:
+        if not events:
+            return "🎉 当前及未来30天没有已识别的限时活动。"
+        lines = ["🎉 当前及未来30天限时活动"]
+        for index, event in enumerate(events[:6], start=1):
+            lines.append(
+                f"{index}. [{event.category}] {event.title}\n"
+                f"时间：{event.date_text}\n{event.url}",
+            )
+        return "\n".join(lines)
+
+    async def query_events(self, now: datetime | None = None) -> str:
+        return self.format_events(await self.get_event_items(now))
+
+    @staticmethod
+    def _patch_title(title: str) -> bool:
+        return any(keyword in title for keyword in ("版本", "补丁", "更新", "HotFix", "热修复"))
+
+    async def query_patch(self, version: str = "") -> str:
+        requested = version.strip()
+        async with create_http_client(self.config, timeout=15.0) as client:
+            items = await self._fetch_news_list(client, NEWS_CATEGORY_CODES, 40)
+        patch_items = [
+            item
+            for item in items
+            if self._patch_title(str(item.get("Title", "")))
+            and (not requested or requested.casefold() in str(item.get("Title", "")).casefold())
+        ][:8]
+        if not patch_items:
+            if requested:
+                return f"❌ 没有找到国服版本“{requested}”的更新公告。"
+            return "📌 暂未获取到国服版本更新公告。"
+        lines = [f"📌 国服版本更新（{requested or '最新'}）"]
+        for index, item in enumerate(patch_items, start=1):
+            title = str(item.get("Title", "未命名版本公告"))
+            publish = str(item.get("PublishDate", "")).split(" ")[0].replace("/", "-")
+            lines.append(f"{index}. [{publish}] {title}\n{self.official_news_url(item)}")
+        if requested:
+            lines.append(f"Wiki归档：https://ff14.huijiwiki.com/index.php?search={quote(requested)}")
+        return "\n".join(lines)

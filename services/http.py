@@ -3,7 +3,10 @@ from typing import Any
 
 import httpx
 
-USER_AGENT = "astrbot_plugin_fflogs/1.6.0"
+USER_AGENT = (
+    "astrbot_plugin_fflogs/2.0.0 "
+    "(FF14 Assistant; +https://github.com/674537331/astrbot_plugin_fflogs)"
+)
 
 
 def config_text(config: Mapping[str, Any], key: str) -> str:

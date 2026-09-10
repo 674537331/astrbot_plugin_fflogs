@@ -9,8 +9,9 @@
   "client_secret": {
     "description": "FFLogs API Client Secret",
     "type": "string",
-    "hint": "在 https://www.fflogs.com/api/clients/ 获取",
+    "hint": "在 https://www.fflogs.com/api/clients/ 获取；仅保存于 AstrBot 配置，不会写入日志或回复",
     "obvious_hint": true,
+    "secret": true,
     "default": ""
   },
   "proxy_url": {
@@ -30,5 +31,113 @@
     "type": "bool",
     "hint": "默认关闭。开启后 /ff14maint 会显示不一定影响登录的维护、网络调整和线路优化公告",
     "default": false
+  },
+  "feature_switches": {
+    "description": "功能开关",
+    "type": "object",
+    "items": {
+      "logs": {"description": "FFLogs查询", "type": "bool", "default": true},
+      "price": {"description": "国服物价", "type": "bool", "default": true},
+      "status": {"description": "服务器状态", "type": "bool", "default": true},
+      "news": {"description": "官网新闻", "type": "bool", "default": true},
+      "maint": {"description": "维护公告", "type": "bool", "default": true},
+      "wiki": {"description": "Wiki查询", "type": "bool", "default": true},
+      "patch": {"description": "版本更新", "type": "bool", "default": true},
+      "ocean": {"description": "海钓查询", "type": "bool", "default": true},
+      "fashion": {"description": "时尚评鉴", "type": "bool", "default": true},
+      "pvp": {"description": "PvP轮换", "type": "bool", "default": true},
+      "events": {"description": "限时活动", "type": "bool", "default": true},
+      "calendar": {"description": "综合日历", "type": "bool", "default": true},
+      "wiki_llm_tool": {"description": "Wiki LLM Tool", "type": "bool", "default": true}
+    }
+  },
+  "calendar_sections": {
+    "description": "综合日历显示栏目",
+    "type": "list",
+    "options": ["daily", "weekly", "pvp", "events"],
+    "labels": ["日常", "周常", "PvP", "活动"],
+    "default": ["daily", "weekly", "pvp", "events"]
+  },
+  "daily_items": {
+    "description": "日常清单",
+    "type": "list",
+    "options": ["随机任务", "友好部族", "每日通缉", "纷争前线日随", "大国防联军筹备"],
+    "labels": ["随机任务", "友好部族", "每日通缉", "纷争前线日随", "大国防联军筹备"],
+    "default": ["随机任务", "友好部族", "每日通缉", "纷争前线日随", "大国防联军筹备"]
+  },
+  "weekly_items": {
+    "description": "周常清单",
+    "type": "list",
+    "options": ["神典石", "天书", "周限制副本/零式", "幻巧", "老主顾", "B怪周常"],
+    "labels": ["神典石", "天书", "周限制副本/零式", "幻巧", "老主顾", "B怪周常"],
+    "default": ["神典石", "天书", "周限制副本/零式", "幻巧", "老主顾", "B怪周常"]
+  },
+  "event_categories": {
+    "description": "限时活动类型",
+    "type": "list",
+    "options": ["季节活动", "联动活动", "奖励型运营活动"],
+    "labels": ["季节活动", "联动活动", "奖励型运营活动"],
+    "default": ["季节活动", "联动活动", "奖励型运营活动"]
+  },
+  "reminder_types": {
+    "description": "主动提醒类型",
+    "hint": "2.0.0 升级后默认不选择任何提醒，避免升级后意外推送",
+    "type": "list",
+    "options": ["daily_refresh", "weekly_refresh", "ocean", "gather", "fish", "event_start", "event_end", "pvp_weekly", "fashion"],
+    "labels": ["日常刷新", "周常刷新", "海钓", "采集", "天气鱼", "活动开始", "活动结束", "PvP周历", "时尚评鉴"],
+    "default": []
+  },
+  "reminder_targets": {
+    "description": "海钓、采集和天气鱼提醒目标",
+    "type": "template_list",
+    "templates": {
+      "ocean": {
+        "name": "海钓路线/成就鱼",
+        "display_item": "name",
+        "items": {
+          "type": {"description": "目标类型", "type": "string", "default": "ocean"},
+          "name": {"description": "路线或成就鱼名称", "type": "string", "default": ""},
+          "lead_minutes": {"description": "提前分钟数", "type": "int", "default": 15},
+          "enabled": {"description": "启用", "type": "bool", "default": true}
+        }
+      },
+      "gather": {
+        "name": "限时采集物",
+        "display_item": "name",
+        "items": {
+          "type": {"description": "目标类型", "type": "string", "default": "gather"},
+          "name": {"description": "采集物名称", "type": "string", "default": ""},
+          "zone": {"description": "地图", "type": "string", "default": ""},
+          "et_window": {"description": "ET窗口，例如 02:00-04:00", "type": "string", "default": ""},
+          "lead_minutes": {"description": "提前分钟数", "type": "int", "default": 10},
+          "enabled": {"description": "启用", "type": "bool", "default": true}
+        }
+      },
+      "fish": {
+        "name": "天气鱼",
+        "display_item": "name",
+        "items": {
+          "type": {"description": "目标类型", "type": "string", "default": "fish"},
+          "name": {"description": "鱼名称", "type": "string", "default": ""},
+          "zone": {"description": "钓场", "type": "string", "default": ""},
+          "et_window": {"description": "ET窗口，例如 18:00-20:00", "type": "string", "default": ""},
+          "lead_minutes": {"description": "提前分钟数", "type": "int", "default": 10},
+          "enabled": {"description": "启用", "type": "bool", "default": true}
+        }
+      }
+    },
+    "default": []
+  },
+  "pvp_rotation": {
+    "description": "PvP轮换算法覆盖（可选）",
+    "hint": "可填写 version、frontline_reference、cc_reference、frontline_interval_minutes、cc_interval_minutes 及地图列表",
+    "type": "dict",
+    "items": {},
+    "default": {}
+  },
+  "ocean_routes": {
+    "description": "海钓路线数据覆盖（可选）",
+    "type": "list",
+    "default": []
   }
 }

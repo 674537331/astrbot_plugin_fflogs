@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from services.ffxiv import CHINA_TZ, FFXIVService, MaintenanceItem
+from services.ffxiv import CHINA_TZ, EventItem, FFXIVService, MaintenanceItem
 
 
 def test_news_count_is_clamped():
@@ -94,3 +94,19 @@ def test_format_server_status():
     )
 
     assert "拉诺西亚: 运行中 / 不可转入 / 可转出 / 不可创建新角色 / 优待状态: 优待" in result
+
+
+def test_event_with_unconfirmed_date_is_displayed_but_not_reminder_ready():
+    item = {"Id": 9, "Title": "季节活动开启", "Summary": "活动时间：待定"}
+
+    result = FFXIVService.build_event_item(item, {}, datetime(2026, 9, 9, tzinfo=CHINA_TZ))
+
+    assert isinstance(result, EventItem)
+    assert result.date_text == "时间待确认"
+    assert result.date_confirmed is False
+    assert result.start_at is None
+
+
+def test_event_category_filters_merchandise_and_offline_events():
+    assert FFXIVService.build_event_item({"Title": "周边商品销售活动"}, {}) is None
+    assert FFXIVService.build_event_item({"Title": "线下直播节目"}, {}) is None
