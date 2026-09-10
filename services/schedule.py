@@ -148,35 +148,28 @@ def future_et_windows(
     return output
 
 
-DEFAULT_WEATHER_PROFILES: dict[str, tuple[str, ...]] = {
-    "拉诺西亚": ("碧空", "阴云", "小雨", "薄雾"),
-    "黑衣森林": ("碧空", "阴云", "薄雾", "暴雨"),
-    "萨纳兰": ("碧空", "晴朗", "热浪", "沙尘暴"),
-    "库尔札斯": ("碧空", "阴云", "暴雪", "薄雾"),
-    "龙堡": ("碧空", "阴云", "暴雨", "雷雨"),
-    "基拉巴尼亚": ("碧空", "阴云", "雷雨", "扬沙"),
-    "诺弗兰特": ("碧空", "阴云", "暴雨", "雷雨"),
-    "萨雷安": ("碧空", "阴云", "小雨", "薄雾"),
-    "塔拉": ("碧空", "阴云", "雷雨", "小雨"),
-}
-
-
 def weather_at_et_window(
     zone: str,
     et_absolute_seconds: float,
     weather_profiles: dict[str, Any] | None = None,
-) -> str:
-    profiles = weather_profiles or DEFAULT_WEATHER_PROFILES
-    profile = None
-    for name, values in profiles.items():
-        if str(name) in zone:
-            profile = values
-            break
+) -> str | None:
+    """Return an explicitly configured weather or ``None``.
+
+    A short repeating list is not the FFXIV weather-rate algorithm and used to
+    produce false weather-fish reminders.  Until a zone's WeatherRate table
+    is loaded from XIVAPI, the safe result is unknown.  Deployments may pass a
+    reviewed profile through configuration for deterministic tests or local
+    overrides; those values are never invented by the plugin.
+    """
+
+    if not isinstance(weather_profiles, dict):
+        return None
+    profile = next(
+        (values for name, values in weather_profiles.items() if str(name) in zone),
+        None,
+    )
     if not isinstance(profile, (list, tuple)) or not profile:
-        profile = DEFAULT_WEATHER_PROFILES["拉诺西亚"]
-    # This is a deterministic local fallback.  The production data set can
-    # override each zone's weather profile through configuration; no network
-    # request is needed for the window calculation itself.
+        return None
     weather_slot = int(et_absolute_seconds // (ET_WINDOW_HOURS * 3600))
     return str(profile[weather_slot % len(profile)])
 
@@ -215,4 +208,3 @@ def future_weather_windows(
 
 def parse_enabled(value: Any) -> bool:
     return as_bool(value, False)
-

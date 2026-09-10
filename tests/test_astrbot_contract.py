@@ -71,8 +71,9 @@ def test_config_schema_and_metadata_version():
 
     assert schema["news_count"]["type"] == "int"
     assert schema["show_low_impact_maintenance"]["type"] == "bool"
-    assert "version: 2.0.0" in metadata
+    assert "version: 2.1.0" in metadata
     assert 'astrbot_version: ">=4.17,<5"' in metadata
     assert schema["client_secret"]["secret"] is True
     assert schema["feature_switches"]["items"]["wiki"]["default"] is True
     assert schema["reminder_types"]["default"] == []
+    assert schema["mainline_patch_terminals"]["type"] == "dict"

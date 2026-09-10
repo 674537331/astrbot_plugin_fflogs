@@ -5,7 +5,8 @@ import httpx
 from services.fashion import FashionService
 from services.pvp import PvpService
 from services.quest import QuestGraphService
-from services.wiki import WIKI_API_URL, WikiResult, WikiService
+from services.wiki import WikiResult, WikiService
+from services.xivapi import XIVAPIRow, XIVAPIService, XIVAPIUnavailable
 
 
 def test_wiki_classifies_complex_entries_and_keeps_short_structured_data():
@@ -16,7 +17,7 @@ def test_wiki_classifies_complex_entries_and_keeps_short_structured_data():
                 "天气鱼。钓场：拉诺西亚外地。鱼饵链：虾肉→小鱼。"
                 "前置天气：阴云。直感条件：需要直感。时间：02:00-04:00。"
             ),
-            "fullurl": "https://ff14.huijiwiki.com/wiki/%E4%BC%A0%E8%AF%B4%E4%B9%8B%E9%B1%BC",
+            "fullurl": "https://example.com/ff14/%E4%BC%A0%E8%AF%B4%E4%B9%8B%E9%B1%BC",
             "categories": [{"title": "Category:天气鱼"}],
         },
     )
@@ -70,49 +71,46 @@ def test_wiki_cache_is_used_when_remote_search_fails(tmp_path):
     asyncio.run(scenario())
 
 
-def test_wiki_redirects_resolve_to_target_page_and_detail_failure_keeps_candidates(tmp_path):
+def test_xivapi_exact_row_uses_detailed_fields(tmp_path):
     async def scenario():
-        service = WikiService({}, tmp_path)
-        calls = []
+        row = XIVAPIRow(
+            sheet="Item",
+            row_id=123,
+            score=1.0,
+            fields={"Name": "正式名称"},
+            api_version="test-search",
+        )
+        detailed = XIVAPIRow(
+            sheet="Item",
+            row_id=123,
+            score=1.0,
+            fields={"Name": "正式名称", "Description": "这是结构化摘要。"},
+            api_version="test-detail",
+        )
 
-        async def fake_request(client, endpoint, params):
-            calls.append(params)
-            if params.get("list") == "search":
-                return {"query": {"search": [{"title": "旧称"}]}}
-            return {
-                "query": {
-                    "redirects": [{"from": "旧称", "to": "正式名称"}],
-                    "pages": [
-                        {
-                            "title": "正式名称",
-                            "extract": "这是正式页面摘要。",
-                            "fullurl": "https://example.com/wiki/正式名称",
-                        },
-                    ],
-                },
-            }
+        class FakeXIVAPI:
+            last_error = None
+            last_result_from_cache = False
+            last_cached_at = None
 
-        service._request_json = fake_request
-        results = await service._fetch_remote("旧称", 5)
+            async def search_rows(self, query, limit=5):
+                return [row]
+
+            async def get_row(self, sheet, row_id, fields):
+                return detailed
+
+        service = WikiService({}, tmp_path, FakeXIVAPI())
+        results = await service._fetch_remote("正式名称", 5)
         assert results[0].title == "正式名称"
-        assert calls[0]["list"] == "search"
-
-        async def failed_request(client, endpoint, params):
-            if params.get("list") == "search":
-                return {"query": {"search": [{"title": "搜索候选"}]}}
-            raise TimeoutError
-
-        service._request_json = failed_request
-        results = await service._fetch_remote("候选", 5)
-        assert results[0].title == "搜索候选"
-        assert results[0].page_type == "候选"
+        assert results[0].summary == "这是结构化摘要。"
+        assert results[0].source_url.endswith("/Item/123?language=chs")
 
     asyncio.run(scenario())
 
 
-def test_wiki_retries_429_and_uses_fallback_after_403(tmp_path):
+def test_xivapi_retries_429_and_raises_after_403(tmp_path):
     async def scenario():
-        service = WikiService({}, tmp_path)
+        service = XIVAPIService({}, tmp_path)
 
         class RateLimitedClient:
             def __init__(self):
@@ -126,17 +124,22 @@ def test_wiki_retries_429_and_uses_fallback_after_403(tmp_path):
                 return httpx.Response(200, json={"ok": True}, request=request)
 
         client = RateLimitedClient()
-        assert await service._request_json(client, "https://example.com", {}) == {"ok": True}
+        assert await service._request_json(client, "search", {}) == {"ok": True}
         assert client.calls == 3
 
-        async def fallback_request(client, endpoint, params):
-            if endpoint == WIKI_API_URL:
-                response = httpx.Response(403, request=httpx.Request("GET", endpoint))
-                response.raise_for_status()
-            return {"query": {"search": []}}
+        class ForbiddenClient:
+            async def get(self, endpoint, params=None):
+                return httpx.Response(
+                    403,
+                    request=httpx.Request("GET", endpoint),
+                )
 
-        service._request_json = fallback_request
-        assert await service._fetch_remote("空结果", 5) == []
+        try:
+            await service._request_json(ForbiddenClient(), "search", {})
+        except XIVAPIUnavailable:
+            pass
+        else:
+            raise AssertionError("403 should become XIVAPIUnavailable")
 
     asyncio.run(scenario())
 
@@ -241,7 +244,7 @@ def test_quest_graph_uses_versioned_msq_endpoint_and_rejects_side_quests(tmp_pat
         progress = await service.progress_for("5.0任务")
         assert "所属版本：5.0 暗影之逆焰" in progress
         assert "主线约第 2/3 条" in progress
-        assert "5.0 内约第 1/1 条" in progress
+        assert "大版本进度：5.x" in progress
         assert await service.progress_for("支线任务") == ""
 
     asyncio.run(scenario())

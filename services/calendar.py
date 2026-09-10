@@ -72,12 +72,18 @@ def build_calendar_data(
     if "daily" in chosen:
         daily_items = _configured_or_default(config, "daily_items", DEFAULT_DAILY_ITEMS)
         reset = next_daily_reset(current)
+        daily_lines = [*[f"□ {item}" for item in daily_items]]
+        if "大国防联军筹备" in daily_items:
+            grand_company_reset = next_daily_reset(current, hour=4)
+            daily_lines.append(
+                f"大国防联军筹备：04:00刷新倒计时：{format_countdown(grand_company_reset - current)}",
+            )
         sections.append(
             {
                 "key": "daily",
                 "title": "日常清单",
                 "lines": [
-                    *[f"□ {item}" for item in daily_items],
+                    *daily_lines,
                     f"23:00刷新倒计时：{format_countdown(reset - current)}",
                 ],
             },
@@ -89,12 +95,6 @@ def build_calendar_data(
             *[f"□ {item}" for item in weekly_items],
             f"周二16:00刷新倒计时：{format_countdown(reset - current)}",
         ]
-        if "大国防联军筹备" in _configured_or_default(
-            config,
-            "daily_items",
-            DEFAULT_DAILY_ITEMS,
-        ):
-            weekly_lines.append("大国防联军筹备：04:00刷新（每日）")
         sections.append(
             {
                 "key": "weekly",

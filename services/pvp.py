@@ -143,7 +143,14 @@ class PvpService:
 
     @staticmethod
     def _as_data_url(content: bytes, content_type: str) -> str:
-        mime_type = content_type if content_type.startswith("image/") else "image/webp"
+        if content.startswith(b"\x89PNG"):
+            mime_type = "image/png"
+        elif content.startswith(b"\xff\xd8"):
+            mime_type = "image/jpeg"
+        elif content.startswith(b"RIFF"):
+            mime_type = "image/webp"
+        else:
+            mime_type = content_type if content_type.startswith("image/") else "image/webp"
         encoded = base64.b64encode(content).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
@@ -164,33 +171,50 @@ class PvpService:
         template can show a text placeholder instead of a broken image icon.
         """
 
+        cache_path = await self.local_image_path(map_id, data_dir)
+        if not cache_path:
+            return ""
+        try:
+            content = await asyncio.to_thread(Path(cache_path).read_bytes)
+        except OSError:
+            return ""
+        return self._as_data_url(content, "image/webp") if content else ""
+
+    async def local_image_path(self, map_id: str, data_dir: str | Path) -> str:
+        """Download once and return an absolute local path for AstrBot.
+
+        ``Image.fromFileSystem`` is more reliable for QQ/OneBot than a remote
+        URL.  The response is size-limited and validated before it is cached.
+        """
+
         cache_path = self._image_cache_path(data_dir, map_id)
         try:
             content = await asyncio.to_thread(cache_path.read_bytes)
         except OSError:
             content = b""
-        if content:
-            return self._as_data_url(content, "image/webp")
+        if content and self._is_image(content, ""):
+            return str(cache_path.resolve())
 
         async with self._image_semaphore:
             try:
                 content = await asyncio.to_thread(cache_path.read_bytes)
             except OSError:
                 content = b""
-            if content:
-                return self._as_data_url(content, "image/webp")
-
+            if content and self._is_image(content, ""):
+                return str(cache_path.resolve())
             try:
                 async with create_http_client(self.config, timeout=10.0) as client:
                     response = await client.get(self.image_url(map_id))
                     response.raise_for_status()
                     content = response.content
+                    if len(content) > 8 * 1024 * 1024:
+                        raise ValueError("image response is too large")
                     content_type = response.headers.get("content-type", "")
                     content_type = content_type.split(";", 1)[0].strip().lower()
                     if not content or not self._is_image(content, content_type):
                         raise ValueError("upstream response is not an image")
                 await asyncio.to_thread(self._write_image, cache_path, content)
-                return self._as_data_url(content, content_type)
+                return str(cache_path.resolve())
             except Exception:
                 logger.warning("PvP 地图图片缓存失败：%s", map_id, exc_info=True)
                 return ""

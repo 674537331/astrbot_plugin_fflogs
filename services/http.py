@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 
 USER_AGENT = (
-    "astrbot_plugin_fflogs/2.0.0 "
+    "astrbot_plugin_fflogs/2.1.0 "
     "(FF14 Assistant; +https://github.com/674537331/astrbot_plugin_fflogs)"
 )
 

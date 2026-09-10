@@ -14,7 +14,6 @@ from .pvp import PvpService
 from .schedule import (
     future_et_windows,
     next_daily_reset,
-    next_weekday_at,
     next_weekly_reset,
     normalize_now,
 )
@@ -49,6 +48,30 @@ def _lead(target: dict[str, Any], reminder_type: str) -> int:
         return min(max(int(value), 0), 7 * 24 * 60)
     except (TypeError, ValueError):
         return DEFAULT_LEADS.get(reminder_type, 10)
+
+
+def _current_or_next_pvp_weekly(now: datetime) -> datetime:
+    """Return this Monday 09:00, or next Monday before the first one.
+
+    The old implementation always called ``next_weekday_at`` and therefore
+    skipped the occurrence when the scheduler restarted after Monday 09:00.
+    Persistent last-check state in ``due_events`` now decides whether a past
+    occurrence still needs delivery.
+    """
+
+    monday = now.date() - timedelta(days=now.weekday())
+    target = now.replace(
+        year=monday.year,
+        month=monday.month,
+        day=monday.day,
+        hour=9,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    if target < now - timedelta(days=6):
+        target += timedelta(days=7)
+    return target
 
 
 def build_reminder_events(
@@ -92,7 +115,7 @@ def build_reminder_events(
         )
 
     if "pvp_weekly" in enabled:
-        target = next_weekday_at(current, 0, 9)
+        target = _current_or_next_pvp_weekly(current)
         current_frontline = pvp.current_frontline(target)
         output.append(
             ReminderEvent(
@@ -102,7 +125,10 @@ def build_reminder_events(
                 trigger_at=target,
                 target_at=target,
                 message=f"本周PvP轮换已更新，当前纷争前线为：{current_frontline.name}。",
-                image_url=current_frontline.image_url,
+                # The dispatcher downloads this map and uses
+                # Image.fromFileSystem; remote image URLs are unreliable for
+                # proactive QQ/OneBot messages.
+                image_url="",
             ),
         )
 
@@ -147,7 +173,13 @@ def build_reminder_events(
         elif target_type in {"gather", "fish"}:
             et_range = str(target.get("et_window") or target.get("window") or "")
             zone = str(target.get("zone", "未知区域"))
-            for start_at, end_at, et_text in future_et_windows(et_range, current, 3):
+            windows = future_et_windows(et_range, current, 3)
+            if target_type == "fish" and not target.get("weather"):
+                # A time-only fish target is not enough to make a weather-fish
+                # reminder. Do not silently turn an unknown weather table into
+                # a false positive.
+                continue
+            for start_at, end_at, et_text in windows:
                 lead = _lead(target, target_type)
                 suffix = "采集" if target_type == "gather" else "天气鱼"
                 output.append(
@@ -189,11 +221,17 @@ def build_reminder_events(
 def due_events(
     events: list[ReminderEvent],
     now: datetime | None = None,
+    last_checked_at: datetime | None = None,
     tolerance: timedelta = timedelta(minutes=1),
 ) -> list[ReminderEvent]:
     current = normalize_now(now)
+    previous = normalize_now(last_checked_at) if last_checked_at else None
     return [
         event
         for event in events
-        if event.trigger_at <= current < event.trigger_at + tolerance
+        if event.trigger_at <= current
+        and (
+            (previous is None and current < event.trigger_at + tolerance)
+            or (previous is not None and event.trigger_at > previous)
+        )
     ]

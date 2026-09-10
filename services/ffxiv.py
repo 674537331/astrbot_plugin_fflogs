@@ -678,5 +678,7 @@ class FFXIVService:
             publish = str(item.get("PublishDate", "")).split(" ")[0].replace("/", "-")
             lines.append(f"{index}. [{publish}] {title}\n{self.official_news_url(item)}")
         if requested:
-            lines.append(f"Wiki归档：https://ff14.huijiwiki.com/index.php?search={quote(requested)}")
+            lines.append(
+                "资料数据源：FFCafe XIVAPI v2；版本详情以以上国服官方公告为准。"
+            )
         return "\n".join(lines)

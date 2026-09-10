@@ -4,6 +4,7 @@ from .ffxiv import FFXIVService
 from .ocean import OceanService
 from .pvp import PvpService
 from .wiki import WikiService
+from .xivapi import XIVAPIService
 
 __all__ = [
     "FFLogsConfigurationError",
@@ -13,4 +14,5 @@ __all__ = [
     "OceanService",
     "PvpService",
     "WikiService",
+    "XIVAPIService",
 ]

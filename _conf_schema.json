@@ -41,14 +41,14 @@
       "status": {"description": "服务器状态", "type": "bool", "default": true},
       "news": {"description": "官网新闻", "type": "bool", "default": true},
       "maint": {"description": "维护公告", "type": "bool", "default": true},
-      "wiki": {"description": "Wiki查询", "type": "bool", "default": true},
+      "wiki": {"description": "FF14资料查询（兼容键名 wiki）", "type": "bool", "default": true},
       "patch": {"description": "版本更新", "type": "bool", "default": true},
       "ocean": {"description": "海钓查询", "type": "bool", "default": true},
       "fashion": {"description": "时尚评鉴", "type": "bool", "default": true},
       "pvp": {"description": "PvP轮换", "type": "bool", "default": true},
       "events": {"description": "限时活动", "type": "bool", "default": true},
       "calendar": {"description": "综合日历", "type": "bool", "default": true},
-      "wiki_llm_tool": {"description": "Wiki LLM Tool", "type": "bool", "default": true}
+      "wiki_llm_tool": {"description": "FF14资料 LLM Tool（兼容键名）", "type": "bool", "default": true}
     }
   },
   "calendar_sections": {
@@ -81,7 +81,7 @@
   },
   "reminder_types": {
     "description": "主动提醒类型",
-    "hint": "2.0.0 升级后默认不选择任何提醒，避免升级后意外推送",
+    "hint": "2.1.0 升级后默认不选择任何提醒，避免升级后意外推送",
     "type": "list",
     "options": ["daily_refresh", "weekly_refresh", "ocean", "gather", "fish", "event_start", "event_end", "pvp_weekly", "fashion"],
     "labels": ["日常刷新", "周常刷新", "海钓", "采集", "天气鱼", "活动开始", "活动结束", "PvP周历", "时尚评鉴"],
@@ -139,5 +139,19 @@
     "description": "海钓路线数据覆盖（可选）",
     "type": "list",
     "default": []
+  },
+  "ocean_rotation": {
+    "description": "海钓轮换版本覆盖（可选）",
+    "hint": "可填写 version 和 reference_date；数据源更新后请使用已核对的参考时间",
+    "type": "dict",
+    "items": {},
+    "default": {}
+  },
+  "mainline_patch_terminals": {
+    "description": "主线小版本终点覆盖（可选）",
+    "hint": "仅填写已核对的 XIVAPI Quest 行号；缺少分界时插件会明确提示资料不完整",
+    "type": "dict",
+    "items": {},
+    "default": {}
   }
 }

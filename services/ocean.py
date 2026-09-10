@@ -9,7 +9,11 @@ from typing import Any
 
 from .schedule import CHINA_TZ, format_countdown, normalize_now
 
-OCEAN_REFERENCE_DATE = datetime(2026, 1, 1, tzinfo=CHINA_TZ)
+# Versioned epoch for the schedule introduced with Ocean Fishing.  The exact
+# route order can be overridden from the backend config when the CN service
+# changes; it is no longer tied to an arbitrary future date.
+OCEAN_ROTATION_VERSION = "5.2-cn"
+OCEAN_REFERENCE_DATE = datetime(2020, 2, 18, tzinfo=CHINA_TZ)
 OCEAN_INTERVAL = timedelta(hours=2)
 
 DEFAULT_ROUTES = (
@@ -53,11 +57,27 @@ class OceanService:
             result.append((str(item["name"]), tuple(str(value) for value in keywords)))
         return tuple(result) or DEFAULT_ROUTES
 
-    @staticmethod
-    def _next_departure(now: datetime) -> datetime:
-        elapsed = (now - OCEAN_REFERENCE_DATE).total_seconds()
+    def _rotation_config(self) -> dict[str, Any]:
+        value = self.config.get("ocean_rotation")
+        return value if isinstance(value, dict) else {}
+
+    def rotation_version(self) -> str:
+        value = self._rotation_config().get("version")
+        return str(value).strip() if value else OCEAN_ROTATION_VERSION
+
+    def reference_date(self) -> datetime:
+        value = self._rotation_config().get("reference_date")
+        if not isinstance(value, str) or not value.strip():
+            return OCEAN_REFERENCE_DATE
+        try:
+            return normalize_now(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except ValueError:
+            return OCEAN_REFERENCE_DATE
+
+    def _next_departure(self, now: datetime) -> datetime:
+        elapsed = (now - self.reference_date()).total_seconds()
         intervals = math.floor(elapsed / OCEAN_INTERVAL.total_seconds()) + 1
-        return OCEAN_REFERENCE_DATE + intervals * OCEAN_INTERVAL
+        return self.reference_date() + intervals * OCEAN_INTERVAL
 
     def _matching_route(self, query: str) -> tuple[str, str] | None:
         normalized = query.strip().casefold()
@@ -89,7 +109,7 @@ class OceanService:
         sequence = self.routes()
         for _ in range(0, 60):
             route_index = math.floor(
-                (departure - OCEAN_REFERENCE_DATE) / OCEAN_INTERVAL,
+                (departure - self.reference_date()) / OCEAN_INTERVAL,
             ) % len(sequence)
             route, keywords = sequence[route_index]
             if target is None:
@@ -134,5 +154,8 @@ class OceanService:
                 f"{voyage.depart_at:%m-%d %H:%M} {voyage.route}"
                 f"（倒计时 {format_countdown(voyage.depart_at - current)}）",
             )
-        lines.append("时间按北京时间计算；路线/成就鱼数据可由配置覆盖。")
+        lines.append(
+            f"时间按北京时间计算；轮换数据版本 {self.rotation_version()}，"
+            "路线/成就鱼数据可由后台配置覆盖。"
+        )
         return "\n".join(lines)

@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -23,6 +24,7 @@ from .services.calendar import (
 )
 from .services.config import feature_enabled, reminder_types
 from .services.fashion import FashionService
+from .services.http import create_http_client
 from .services.ocean import OceanService
 from .services.pvp import PvpService
 from .services.quest import QuestGraphService
@@ -30,6 +32,7 @@ from .services.reminders import build_reminder_events, due_events
 from .services.schedule import format_countdown, normalize_now
 from .services.storage import get_plugin_data_dir
 from .services.wiki import WikiResult, WikiService
+from .services.xivapi import XIVAPIService
 
 PVP_TEMPLATE = """
 <style>
@@ -46,7 +49,7 @@ h1{margin:0 0 8px;color:#ffd479}.sub{color:#aebbd0;margin-bottom:18px}
   <h1>⚔️ FF14 PvP 周历</h1>
   <div class="sub">当前纷争前线：{{ current_frontline }} · 23:00换图倒计时：{{ frontline_countdown }} · 当前水晶冲突：{{ current_cc }}</div>
   <div class="maps">
-  {% for entry in maps %}<div class="map">{% if entry.image_data %}<img src="{{ entry.image_data }}">{% else %}<div class="placeholder">地图图片暂不可用</div>{% endif %}<div>{{ entry.date }}　{{ entry.name }}</div></div>{% endfor %}
+  {% for entry in maps %}<div class="map">{% if entry.image_src %}<img src="{{ entry.image_src }}">{% else %}<div class="placeholder">地图图片暂不可用</div>{% endif %}<div>{{ entry.date }}　{{ entry.name }}</div></div>{% endfor %}
   </div>
   <div class="sub" style="margin-top:18px">后续水晶冲突：{% for entry in cc_upcoming %}{{ entry.date }} {{ entry.name }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
 </div>
@@ -62,8 +65,9 @@ class FF14LogsPlugin(Star):
         self.data_dir = get_plugin_data_dir()
         self.fflogs = FFLogsService(config)
         self.ffxiv = FFXIVService(config)
-        self.wiki = WikiService(config, self.data_dir)
-        self.quest_graph = QuestGraphService(config, self.data_dir)
+        self.xivapi = XIVAPIService(config, self.data_dir)
+        self.wiki = WikiService(config, self.data_dir, self.xivapi)
+        self.quest_graph = QuestGraphService(config, self.data_dir, self.xivapi)
         self.pvp = PvpService(config)
         self.ocean = OceanService(config)
         self.fashion = FashionService(config, self.data_dir)
@@ -128,7 +132,13 @@ class FF14LogsPlugin(Star):
         return str(value or "").strip()
 
     def _wiki_candidate_keys(self, event: AstrMessageEvent) -> list[str]:
-        """Build a stable session key and retain the old key for upgrades."""
+        """Build a candidate key scoped to the actual sender.
+
+        A group-wide key lets one member overwrite another member's five
+        minute candidate list.  The sender component is required for group
+        chats; ``unified_msg_origin`` is used only as a last-resort private
+        session fallback.
+        """
 
         origin = self._event_identifier(event, "unified_msg_origin")
         platform = (
@@ -137,19 +147,27 @@ class FF14LogsPlugin(Star):
             or "unknown"
         )
         group_id = self._event_identifier(event, "get_group_id")
+        sender_id = (
+            self._event_identifier(event, "get_sender_id")
+            or self._event_identifier(event, "get_user_id")
+            or self._event_identifier(event, "sender_id")
+        )
+        if not sender_id:
+            message_obj = getattr(event, "message_obj", None)
+            sender = getattr(message_obj, "sender", None)
+            sender_id = str(
+                getattr(sender, "user_id", "")
+                or getattr(sender, "id", "")
+                or "",
+            ).strip()
         if group_id:
-            stable_key = f"wiki_candidates:v2:{platform}:group:{group_id}"
-        else:
-            sender_id = (
-                self._event_identifier(event, "get_sender_id")
-                or self._event_identifier(event, "get_session_id")
-                or origin
+            stable_key = (
+                f"wiki_candidates:v3:{platform}:group:{group_id}:"
+                f"user:{sender_id or 'unknown'}"
             )
-            stable_key = f"wiki_candidates:v2:{platform}:user:{sender_id}"
-        keys = [stable_key]
-        if origin:
-            keys.append(f"wiki_candidates:{origin}")
-        return list(dict.fromkeys(keys))
+        else:
+            stable_key = f"wiki_candidates:v3:{platform}:user:{sender_id or origin or 'unknown'}"
+        return [stable_key]
 
     async def _load_wiki_candidates(
         self,
@@ -190,6 +208,7 @@ class FF14LogsPlugin(Star):
             "created_at": time.time(),
             "expires_at": time.time() + 5 * 60,
             "results": [result.to_dict() for result in results[:5]],
+            "owner": self._wiki_candidate_keys(event)[0],
         }
         for key in self._wiki_candidate_keys(event):
             self._wiki_candidates_memory[key] = payload
@@ -218,24 +237,32 @@ class FF14LogsPlugin(Star):
         result: WikiResult,
         query: str,
     ) -> WikiResult:
-        """Fill in main-quest progress when HuijiWiki is temporarily blocked."""
+        """Add the dual main-scenario progress when a result is a quest."""
 
-        if result.page_type != "候选":
+        if result.page_type not in {"任务", "候选"}:
             return result
         try:
             progress = await self.quest_graph.progress_for(query)
         except Exception:
-            logger.warning("Wiki 主线任务降级查询失败", exc_info=True)
+            logger.warning("资料主线任务进度查询失败", exc_info=True)
             return result
         if not progress:
             return result
         return WikiResult(
             title=result.title,
             page_type="任务",
-            summary="Wiki接口暂时不可用；以下主线进度来自运行时 Quest.csv 任务图。",
+            summary=(
+                "XIVAPI v2 已返回任务条目；以下主线进度来自运行时任务图，"
+                "百分比不表示角色实际完成度。"
+            ),
             quest_progress=progress,
+            time_windows=result.time_windows,
+            details=result.details,
             source_url=result.source_url,
             cached_at=result.cached_at,
+            sheet=result.sheet,
+            row_id=result.row_id,
+            api_version=result.api_version,
         )
 
     async def _query_fflogs(self, character_name: str, server_name: str) -> str:
@@ -286,7 +313,7 @@ class FF14LogsPlugin(Star):
         query: str,
         limit: int = 5,
     ) -> str:
-        """搜索 FF14 Wiki 并返回结构化短结果，不主动发送消息。
+        """搜索 FF14 游戏资料并返回结构化短结果，不主动发送消息。
 
         Args:
             query(string): 要查询的物品、装备、收藏、成就、任务、采集物或鱼名。
@@ -298,6 +325,8 @@ class FF14LogsPlugin(Star):
         if error:
             return error
         results = await self.wiki.search_ff14_wiki(query, limit)
+        if not results and self.wiki.last_error:
+            return self.wiki.format_unavailable(query, self.wiki.last_error)
         return json.dumps([result.to_dict() for result in results], ensure_ascii=False)
 
     @filter.command("ff14helps")
@@ -316,7 +345,7 @@ class FF14LogsPlugin(Star):
 /ff14 status　国服服务器状态（兼容 /ff14status）
 /ff14 news　最新国服公告（兼容 /ff14news）
 /ff14 maint　维护公告（兼容 /ff14maint）
-/ff14 wiki <关键词>　统一查询 Wiki；回复 /ff14 wiki #编号 选择候选
+/ff14 wiki <关键词>　统一查询 FF14资料；回复 /ff14 wiki #编号 选择候选
 /ff14 patch [版本]　查询国服版本更新
 /ff14 ocean [路线/成就鱼]　查询未来3班海钓航班
 /ff14 fashion　查询本周时尚评鉴和80分方案
@@ -345,8 +374,10 @@ class FF14LogsPlugin(Star):
             if len(pieces) < 2:
                 yield event.plain_result("用法：/ff14 logs <角色名> <服务器名>")
                 return
-            yield event.plain_result(f"🔍 正在检索 {pieces[0]}@{pieces[1]} 的全版本档案...")
-            yield event.plain_result(await self._query_fflogs(pieces[0], pieces[1]))
+            character_name = " ".join(pieces[:-1])
+            server_name = pieces[-1]
+            yield event.plain_result(f"🔍 正在检索 {character_name}@{server_name} 的全版本档案...")
+            yield event.plain_result(await self._query_fflogs(character_name, server_name))
         elif command == "price":
             yield event.plain_result(await self._price_result(argument))
         elif command in {"status", "server"}:
@@ -385,7 +416,10 @@ class FF14LogsPlugin(Star):
             yield event.plain_result(await self._unsubscribe(event))
         else:
             # v1 compatibility: /ff14 <物品名> means price lookup.
-            yield event.plain_result(await self._price_result(rest))
+            if re.fullmatch(r"[a-z][a-z0-9_-]*", command):
+                yield event.plain_result(f"❌ 未知子命令“{command}”。\n\n{self.help_text()}")
+            else:
+                yield event.plain_result(await self._price_result(rest))
 
     @filter.command("ff14status")
     async def cmd_ff14_status(self, event: AstrMessageEvent):
@@ -452,7 +486,7 @@ class FF14LogsPlugin(Star):
         )
 
     async def _wiki_result(self, event: AstrMessageEvent, query: str) -> str:
-        error = self._feature_error("wiki", "Wiki")
+        error = self._feature_error("wiki", "FF14资料")
         if error:
             return error
         query = query.strip()
@@ -465,39 +499,22 @@ class FF14LogsPlugin(Star):
                 return "❌ 候选编号必须是数字，例如 /ff14 wiki #1。"
             candidates, expired = await self._load_wiki_candidates(event)
             if candidates is None and expired:
-                return "❌ 上一次 Wiki 候选已过期，请重新搜索。"
+                return "❌ 上一次 FF14资料候选已过期，请重新搜索。"
             if candidates is None:
-                return "❌ 没有找到5分钟内的候选词条，请重新搜索。"
+                return "❌ 没有找到当前用户5分钟内的候选词条，请重新搜索。"
             raw_results = candidates.get("results", [])
             if not isinstance(raw_results, list) or not 1 <= index <= len(raw_results):
                 return "❌ 候选编号不存在，请使用列表中的编号。"
             raw = raw_results[index - 1]
             if not isinstance(raw, dict):
                 return "❌ 候选词条数据无效，请重新搜索。"
-            raw_time_windows = raw.get("time_windows", [])
-            if not isinstance(raw_time_windows, (list, tuple)):
-                raw_time_windows = []
-            raw_details = raw.get("details", {})
-            if not isinstance(raw_details, dict):
-                raw_details = {}
-            selected = WikiResult(
-                title=str(raw.get("title", "")),
-                page_type=str(raw.get("type", raw.get("page_type", "普通"))),
-                summary=str(raw.get("summary", "")),
-                acquisition=str(raw.get("acquisition", "")),
-                unlock_info=str(raw.get("unlock_info", "")),
-                quest_progress=str(raw.get("quest_progress", "")),
-                time_windows=tuple(str(value) for value in raw_time_windows),
-                details={
-                    str(key): str(value)
-                    for key, value in raw_details.items()
-                },
-                source_url=str(raw.get("url", raw.get("source_url", ""))),
-            )
+            selected = WikiResult.from_dict(raw)
             selected = await self._wiki_quest_fallback(selected, selected.title)
             return self.wiki.format_results(selected.title, [selected])
 
         results = await self.wiki.search_ff14_wiki(query, 5)
+        if not results and self.wiki.last_error:
+            return self.wiki.format_unavailable(query, self.wiki.last_error)
         exact = next(
             (result for result in results if result.title.casefold() == query.casefold()),
             None,
@@ -542,21 +559,24 @@ class FF14LogsPlugin(Star):
         error = self._feature_error("pvp", "PvP")
         if error:
             return error, ""
-        status = self.pvp.format_status()
         now = normalize_now()
-        current = self.pvp.current_frontline()
-        cc = self.pvp.current_cc()
-        weekly = self.pvp.weekly_frontline()
+        status = self.pvp.format_status(now)
+        current = self.pvp.current_frontline(now)
+        cc = self.pvp.current_cc(now)
+        weekly = self.pvp.weekly_frontline(now)
         map_ids = list(dict.fromkeys(entry.map_id for entry in weekly))
-        image_data = await asyncio.gather(
-            *(self.pvp.local_image_data(map_id, self.data_dir) for map_id in map_ids),
-        )
-        image_by_map = dict(zip(map_ids, image_data, strict=True))
+        async def image_source(map_id: str) -> str:
+            # The source is cached on disk first, then embedded as a data URL
+            # because Chromium may reject file:// URLs in the HTML renderer.
+            return await self.pvp.local_image_data(map_id, self.data_dir)
+
+        image_sources = await asyncio.gather(*(image_source(map_id) for map_id in map_ids))
+        image_source_by_map = dict(zip(map_ids, image_sources, strict=True))
         maps = [
             {
                 "date": entry.start_at.strftime("%m-%d"),
                 "name": entry.name,
-                "image_data": image_by_map.get(entry.map_id, ""),
+                "image_src": image_source_by_map.get(entry.map_id, ""),
             }
             for entry in weekly
         ]
@@ -625,14 +645,23 @@ class FF14LogsPlugin(Star):
         if not rendered:
             return ""
         rendered_text = str(rendered)
+        target_dir = self.data_dir / "generated"
+        await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
+        target = target_dir / f"{name}-{uuid4().hex[:12]}.png"
         if rendered_text.startswith(("http://", "https://")):
-            return rendered_text
+            try:
+                async with create_http_client(self.config, timeout=20.0) as client:
+                    response = await client.get(rendered_text)
+                    response.raise_for_status()
+                    content = response.content
+                await asyncio.to_thread(target.write_bytes, content)
+                return str(target)
+            except Exception:
+                logger.warning("保存 %s 渲染图片失败", name, exc_info=True)
+                return rendered_text
         source = Path(rendered_text)
         if not await asyncio.to_thread(source.exists):
             return rendered_text
-        target_dir = self.data_dir / "generated"
-        await asyncio.to_thread(target_dir.mkdir, parents=True, exist_ok=True)
-        target = target_dir / f"{name}.png"
         try:
             source_resolved, target_resolved = await asyncio.gather(
                 asyncio.to_thread(source.resolve),
@@ -706,6 +735,7 @@ class FF14LogsPlugin(Star):
         enabled = reminder_types(self.config)
         if not enabled:
             return
+        now = normalize_now()
         events = await self._cached_events() if {"event_start", "event_end"} & enabled else []
         fashion = await self._cached_fashion() if "fashion" in enabled else None
         reminder_events = build_reminder_events(
@@ -714,15 +744,25 @@ class FF14LogsPlugin(Star):
             self.ocean,
             events,
             fashion,
+            now,
         )
-        due = due_events(reminder_events)
+        raw_last_checked = await self.get_kv_data("reminder_last_checked_at", "")
+        last_checked = None
+        if isinstance(raw_last_checked, str) and raw_last_checked:
+            try:
+                last_checked = datetime.fromisoformat(raw_last_checked)
+            except ValueError:
+                last_checked = None
+        due = due_events(reminder_events, now, last_checked)
         if not due:
+            await self.put_kv_data("reminder_last_checked_at", now.isoformat())
             return
         subscriptions = await self._subscriptions()
         sent = await self.get_kv_data("sent_reminders", {})
         if not isinstance(sent, dict):
             sent = {}
         changed = False
+        delivery_failed = False
         for subscription in subscriptions:
             origin = subscription.get("origin")
             if not isinstance(origin, str) or not origin:
@@ -732,11 +772,24 @@ class FF14LogsPlugin(Star):
                 if sent_key in sent:
                     continue
                 chain = MessageChain().message(f"🔔 {reminder.title}\n{reminder.message}")
-                if reminder.image_url:
+                image_path = ""
+                if reminder.reminder_type == "pvp_weekly":
+                    try:
+                        map_entry = self.pvp.current_frontline(reminder.target_at)
+                        image_path = await self.pvp.local_image_path(
+                            map_entry.map_id,
+                            self.data_dir,
+                        )
+                    except Exception:
+                        logger.warning("PvP提醒图片缓存失败", exc_info=True)
+                if image_path or reminder.image_url:
                     try:
                         from astrbot.api import message_components as Comp
 
-                        chain.chain.append(Comp.Image.fromURL(reminder.image_url))
+                        if image_path:
+                            chain.chain.append(Comp.Image.fromFileSystem(image_path))
+                        else:
+                            chain.chain.append(Comp.Image.fromURL(reminder.image_url))
                     except Exception:
                         logger.debug("提醒图片组件创建失败", exc_info=True)
                 try:
@@ -744,11 +797,16 @@ class FF14LogsPlugin(Star):
                     if result is not False:
                         sent[sent_key] = datetime.now().isoformat(timespec="seconds")
                         changed = True
+                    else:
+                        delivery_failed = True
                 except Exception:
+                    delivery_failed = True
                     logger.warning("向 %s 推送 FF14 提醒失败", origin, exc_info=True)
         if changed:
             sent = dict(list(sent.items())[-2000:])
             await self.put_kv_data("sent_reminders", sent)
+        if not delivery_failed:
+            await self.put_kv_data("reminder_last_checked_at", now.isoformat())
 
     async def _scheduler_loop(self) -> None:
         while True:
