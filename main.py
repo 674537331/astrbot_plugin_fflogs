@@ -213,6 +213,31 @@ class FF14LogsPlugin(Star):
             except Exception:
                 logger.warning("清理 Wiki 候选失败：%s", key, exc_info=True)
 
+    async def _wiki_quest_fallback(
+        self,
+        result: WikiResult,
+        query: str,
+    ) -> WikiResult:
+        """Fill in main-quest progress when HuijiWiki is temporarily blocked."""
+
+        if result.page_type != "候选":
+            return result
+        try:
+            progress = await self.quest_graph.progress_for(query)
+        except Exception:
+            logger.warning("Wiki 主线任务降级查询失败", exc_info=True)
+            return result
+        if not progress:
+            return result
+        return WikiResult(
+            title=result.title,
+            page_type="任务",
+            summary="Wiki接口暂时不可用；以下主线进度来自运行时 Quest.csv 任务图。",
+            quest_progress=progress,
+            source_url=result.source_url,
+            cached_at=result.cached_at,
+        )
+
     async def _query_fflogs(self, character_name: str, server_name: str) -> str:
         error = self._feature_error("logs", "FFLogs")
         if error:
@@ -469,6 +494,7 @@ class FF14LogsPlugin(Star):
                 },
                 source_url=str(raw.get("url", raw.get("source_url", ""))),
             )
+            selected = await self._wiki_quest_fallback(selected, selected.title)
             return self.wiki.format_results(selected.title, [selected])
 
         results = await self.wiki.search_ff14_wiki(query, 5)
@@ -478,7 +504,8 @@ class FF14LogsPlugin(Star):
         )
         if len(results) == 1 or exact:
             selected = exact or results[0]
-            if selected.page_type == "任务":
+            selected = await self._wiki_quest_fallback(selected, query)
+            if selected.page_type == "任务" and not selected.quest_progress:
                 progress = await self.quest_graph.progress_for(selected.title)
                 if progress:
                     selected = WikiResult(**{**selected.__dict__, "quest_progress": progress})

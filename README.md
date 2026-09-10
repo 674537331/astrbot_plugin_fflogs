@@ -54,7 +54,7 @@ FFLogs 查询仍需在 [FFLogs API Clients](https://www.fflogs.com/api/clients/)
 
 ## 数据来源与缓存
 
-- Wiki 主端点为 `ff14.huijiwiki.com/w/api.php`，备用端点为 `cdn.huijiwiki.com/ff14/api.php`。请求带描述性 User-Agent、超时、并发限制和 403/429 退避；失败时优先返回带缓存时间的旧结果。
+- Wiki 主端点为 `ff14.huijiwiki.com/w/api.php`，备用端点为 `cdn.huijiwiki.com/ff14/api.php`。请求带描述性 User-Agent、超时、并发限制和 403/429 退避；失败时优先返回带缓存时间的旧结果。若 Wiki 被 Cloudflare 或网络代理拦截，运行时 Quest.csv（可自动下载并缓存）仍可补充主线任务进度，其他词条只返回候选标题和原文链接。
 - 官方新闻、版本和活动使用国服官网新闻接口；时间未确认、包含 `??` 或“待定”的活动不会进入提醒队列。
 - 主线任务图从国服数据仓库运行时下载 `Quest.csv`，缓存于 `data/plugin_data/astrbot_plugin_fflogs/`，不会提交大型数据文件。任务百分比表示数据图中的顺序位置，不表示账号实际完成度。
 - PvP 轮换使用版本化参考时间、间隔和地图顺序，管理员可以在 `pvp_rotation` 中覆盖；算法设计参考 [ffxiv-wakeng/pvp-calendar](https://github.com/ffxiv-wakeng/pvp-calendar)，没有复制其代码或资源。

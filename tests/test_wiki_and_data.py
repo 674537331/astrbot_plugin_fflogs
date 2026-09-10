@@ -4,6 +4,7 @@ import httpx
 
 from services.fashion import FashionService
 from services.pvp import PvpService
+from services.quest import QuestGraphService
 from services.wiki import WIKI_API_URL, WikiResult, WikiService
 
 
@@ -205,6 +206,22 @@ def test_pvp_map_image_is_cached_and_embedded(tmp_path, monkeypatch):
         assert second == first
         assert calls == 1
         assert (tmp_path / "pvp_maps" / "secure.webp").read_bytes() == b"RIFF1234WEBP"
+
+    asyncio.run(scenario())
+
+
+def test_quest_graph_can_provide_progress_from_cached_csv(tmp_path):
+    (tmp_path / "Quest.csv").write_text(
+        "#,Name,PreviousQuest[0],Type\n"
+        "1,前置任务,0,0\n"
+        "2,舞台上最悲惨的演员,1,0\n",
+        encoding="utf-8",
+    )
+
+    async def scenario():
+        service = QuestGraphService({}, tmp_path)
+        progress = await service.progress_for("舞台上最悲惨的演员")
+        assert "主线约第 2/2 条" in progress
 
     asyncio.run(scenario())
 

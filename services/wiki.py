@@ -424,8 +424,8 @@ class WikiService:
                     title=query,
                     page_type="候选",
                     summary=(
-                        "Wiki搜索接口暂时不可用（主端点和备用端点均未响应）；"
-                        "当前没有可用缓存。"
+                        "Wiki搜索接口暂时不可用（主端点和备用端点均失败，"
+                        "可能是 Cloudflare 验证或网络/代理问题）；当前没有可用缓存。"
                     ),
                     source_url=f"https://ff14.huijiwiki.com/index.php?search={quote(query)}",
                     cached_at=cached_at,
