@@ -23,6 +23,9 @@ def create_http_client(
         "follow_redirects": True,
         "headers": {"User-Agent": USER_AGENT},
         "timeout": httpx.Timeout(timeout),
+        # Use the plugin's explicit proxy_url setting instead of inheriting a
+        # process-wide ALL_PROXY value (which may require httpx[socks]).
+        "trust_env": False,
     }
     if proxy_url:
         kwargs["proxy"] = proxy_url

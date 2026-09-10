@@ -364,7 +364,7 @@ class WikiService:
                     WikiResult(
                         title=title,
                         page_type="候选",
-                        summary="Wiki详情接口暂时不可用，请打开原文链接查看。",
+                        summary="Wiki详情接口暂时不可用，已保留搜索标题；请打开原文链接查看。",
                         source_url=f"{WIKI_PAGE_URL}{quote(title)}",
                     )
                     for title in titles
@@ -423,16 +423,53 @@ class WikiService:
                 WikiResult(
                     title=query,
                     page_type="候选",
-                    summary="Wiki接口暂时不可用，请打开原文链接查看；当前没有可用缓存。",
+                    summary=(
+                        "Wiki搜索接口暂时不可用（主端点和备用端点均未响应）；"
+                        "当前没有可用缓存。"
+                    ),
                     source_url=f"https://ff14.huijiwiki.com/index.php?search={quote(query)}",
                     cached_at=cached_at,
                 ),
             ]
 
     @staticmethod
+    def _format_single(result: WikiResult) -> str:
+        lines = [f"📚 【{result.title}】（{result.page_type}）", result.summary]
+        if result.page_type == "普通":
+            points = []
+            for label, value in (
+                ("获取/来源", result.acquisition),
+                ("解锁/前置", result.unlock_info),
+                ("任务信息", result.quest_progress),
+            ):
+                if value:
+                    points.append(f"{label}：{value}")
+            points.extend(f"{key}：{value}" for key, value in result.details.items())
+            lines.extend(f"重点：{point}" for point in points[:3])
+        else:
+            if result.acquisition:
+                lines.append(f"获取/来源：{result.acquisition}")
+            if result.unlock_info:
+                lines.append(f"解锁/前置：{result.unlock_info}")
+            if result.quest_progress:
+                lines.append(f"任务信息：{result.quest_progress}")
+            if result.time_windows:
+                lines.append(f"时间窗口：{'；'.join(result.time_windows)}")
+            for key, value in result.details.items():
+                lines.append(f"{key}：{value}")
+        if result.cached_at:
+            lines.append(f"（缓存于 {result.cached_at}）")
+        if result.page_type == "候选":
+            lines.append("⚠️ 这是搜索候选标题，详细资料暂未返回；请稍后重试。")
+        lines.append(result.source_url)
+        return "\n".join(lines)
+
+    @staticmethod
     def format_results(query: str, results: list[WikiResult]) -> str:
         if not results:
             return f"❌ Wiki没有找到“{query}”的候选词条。"
+        if len(results) == 1:
+            return WikiService._format_single(results[0])
         exact = [
             result
             for result in results
@@ -440,34 +477,7 @@ class WikiService:
             and result.page_type != "候选"
         ]
         if len(exact) == 1:
-            result = exact[0]
-            lines = [f"📚 【{result.title}】（{result.page_type}）", result.summary]
-            if result.page_type == "普通":
-                points = []
-                for label, value in (
-                    ("获取/来源", result.acquisition),
-                    ("解锁/前置", result.unlock_info),
-                    ("任务信息", result.quest_progress),
-                ):
-                    if value:
-                        points.append(f"{label}：{value}")
-                points.extend(f"{key}：{value}" for key, value in result.details.items())
-                lines.extend(f"重点：{point}" for point in points[:3])
-            else:
-                if result.acquisition:
-                    lines.append(f"获取/来源：{result.acquisition}")
-                if result.unlock_info:
-                    lines.append(f"解锁/前置：{result.unlock_info}")
-                if result.quest_progress:
-                    lines.append(f"任务信息：{result.quest_progress}")
-                if result.time_windows:
-                    lines.append(f"时间窗口：{'；'.join(result.time_windows)}")
-                for key, value in result.details.items():
-                    lines.append(f"{key}：{value}")
-            if result.cached_at:
-                lines.append(f"（缓存于 {result.cached_at}）")
-            lines.append(result.source_url)
-            return "\n".join(lines)
+            return WikiService._format_single(exact[0])
 
         lines = [f"🔎 “{query}”有多个候选词条，请在5分钟内回复 /ff14 wiki #编号："]
         for index, result in enumerate(results[:5], start=1):

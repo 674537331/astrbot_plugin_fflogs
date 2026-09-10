@@ -8,12 +8,20 @@ without changing code.
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import logging
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+from .http import create_http_client
 from .schedule import CHINA_TZ, format_countdown, normalize_now
+
+logger = logging.getLogger(__name__)
 
 PVP_ROTATION_VERSION = "2026.01"
 FRONTLINE_REFERENCE_DATE = datetime(2025, 7, 16, 23, 0, tzinfo=CHINA_TZ)
@@ -50,6 +58,7 @@ class RotationEntry:
 class PvpService:
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self._image_semaphore = asyncio.Semaphore(4)
 
     def _rotation_overrides(self) -> dict[str, Any]:
         value = self.config.get("pvp_rotation")
@@ -120,6 +129,71 @@ class PvpService:
     @staticmethod
     def image_url(map_id: str) -> str:
         return f"{MAP_IMAGE_BASE_URL}/{map_id}.webp"
+
+    @staticmethod
+    def _image_cache_path(data_dir: str | Path, map_id: str) -> Path:
+        safe_map_id = re.sub(r"[^A-Za-z0-9_.-]", "_", map_id).strip(".") or "map"
+        return Path(data_dir) / "pvp_maps" / f"{safe_map_id}.webp"
+
+    @staticmethod
+    def _is_image(content: bytes, content_type: str) -> bool:
+        if content_type.startswith("image/"):
+            return True
+        return content.startswith((b"RIFF", b"\x89PNG", b"\xff\xd8"))
+
+    @staticmethod
+    def _as_data_url(content: bytes, content_type: str) -> str:
+        mime_type = content_type if content_type.startswith("image/") else "image/webp"
+        encoded = base64.b64encode(content).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
+
+    @staticmethod
+    def _write_image(path: Path, content: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_bytes(content)
+        temporary.replace(path)
+
+    async def local_image_data(self, map_id: str, data_dir: str | Path) -> str:
+        """Return a cached map image as a data URL for HTML rendering.
+
+        QQ clients and AstrBot's HTML renderer may not be able to fetch the
+        upstream GitHub image URL.  The image is therefore downloaded once to
+        the plugin data directory and embedded into the generated PNG.  A
+        failed download is deliberately represented by an empty string so the
+        template can show a text placeholder instead of a broken image icon.
+        """
+
+        cache_path = self._image_cache_path(data_dir, map_id)
+        try:
+            content = await asyncio.to_thread(cache_path.read_bytes)
+        except OSError:
+            content = b""
+        if content:
+            return self._as_data_url(content, "image/webp")
+
+        async with self._image_semaphore:
+            try:
+                content = await asyncio.to_thread(cache_path.read_bytes)
+            except OSError:
+                content = b""
+            if content:
+                return self._as_data_url(content, "image/webp")
+
+            try:
+                async with create_http_client(self.config, timeout=10.0) as client:
+                    response = await client.get(self.image_url(map_id))
+                    response.raise_for_status()
+                    content = response.content
+                    content_type = response.headers.get("content-type", "")
+                    content_type = content_type.split(";", 1)[0].strip().lower()
+                    if not content or not self._is_image(content, content_type):
+                        raise ValueError("upstream response is not an image")
+                await asyncio.to_thread(self._write_image, cache_path, content)
+                return self._as_data_url(content, content_type)
+            except Exception:
+                logger.warning("PvP 地图图片缓存失败：%s", map_id, exc_info=True)
+                return ""
 
     @classmethod
     def _rotation_index(

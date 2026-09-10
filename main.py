@@ -5,6 +5,7 @@ import contextlib
 import json
 import re
 import shutil
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,13 +38,15 @@ body{margin:0;background:#111827;color:#eef3fb;font-family:Arial,"Noto Sans SC",
 h1{margin:0 0 8px;color:#ffd479}.sub{color:#aebbd0;margin-bottom:18px}
 .maps{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 .map{border:1px solid #3b5275;border-radius:13px;overflow:hidden;background:#20324f}
-.map img{display:block;width:100%;height:120px;object-fit:cover}.map div{padding:10px;font-size:17px}
+.map img,.placeholder{display:block;width:100%;height:120px;object-fit:cover}
+.placeholder{display:flex;align-items:center;justify-content:center;color:#aebbd0;background:#263957}
+.map div{padding:10px;font-size:17px}
 </style>
 <div class="card">
   <h1>⚔️ FF14 PvP 周历</h1>
   <div class="sub">当前纷争前线：{{ current_frontline }} · 23:00换图倒计时：{{ frontline_countdown }} · 当前水晶冲突：{{ current_cc }}</div>
   <div class="maps">
-  {% for entry in maps %}<div class="map"><img src="{{ entry.image_url }}"><div>{{ entry.date }}　{{ entry.name }}</div></div>{% endfor %}
+  {% for entry in maps %}<div class="map">{% if entry.image_data %}<img src="{{ entry.image_data }}">{% else %}<div class="placeholder">地图图片暂不可用</div>{% endif %}<div>{{ entry.date }}　{{ entry.name }}</div></div>{% endfor %}
   </div>
   <div class="sub" style="margin-top:18px">后续水晶冲突：{% for entry in cc_upcoming %}{{ entry.date }} {{ entry.name }}{% if not loop.last %} · {% endif %}{% endfor %}</div>
 </div>
@@ -69,6 +72,7 @@ class FF14LogsPlugin(Star):
         self._event_cache_at: datetime | None = None
         self._fashion_cache: Any = None
         self._fashion_cache_at: datetime | None = None
+        self._wiki_candidates_memory: dict[str, dict[str, Any]] = {}
 
     async def initialize(self) -> None:
         """Start the one-minute reminder loop after the plugin is activated."""
@@ -112,6 +116,102 @@ class FF14LogsPlugin(Star):
         if feature_enabled(self.config, feature):
             return None
         return f"⏸️ {label}功能已在插件后台关闭。"
+
+    @staticmethod
+    def _event_identifier(event: AstrMessageEvent, name: str) -> str:
+        value = getattr(event, name, "")
+        if callable(value):
+            try:
+                value = value()
+            except Exception:
+                value = ""
+        return str(value or "").strip()
+
+    def _wiki_candidate_keys(self, event: AstrMessageEvent) -> list[str]:
+        """Build a stable session key and retain the old key for upgrades."""
+
+        origin = self._event_identifier(event, "unified_msg_origin")
+        platform = (
+            self._event_identifier(event, "get_platform_id")
+            or self._event_identifier(event, "get_platform_name")
+            or "unknown"
+        )
+        group_id = self._event_identifier(event, "get_group_id")
+        if group_id:
+            stable_key = f"wiki_candidates:v2:{platform}:group:{group_id}"
+        else:
+            sender_id = (
+                self._event_identifier(event, "get_sender_id")
+                or self._event_identifier(event, "get_session_id")
+                or origin
+            )
+            stable_key = f"wiki_candidates:v2:{platform}:user:{sender_id}"
+        keys = [stable_key]
+        if origin:
+            keys.append(f"wiki_candidates:{origin}")
+        return list(dict.fromkeys(keys))
+
+    async def _load_wiki_candidates(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        now = time.time()
+        expired_seen = False
+        for key in self._wiki_candidate_keys(event):
+            candidates = self._wiki_candidates_memory.get(key)
+            if candidates is None:
+                try:
+                    stored = await self.get_kv_data(key, {})
+                except Exception:
+                    logger.warning("读取 Wiki 候选失败：%s", key, exc_info=True)
+                    stored = {}
+                if isinstance(stored, dict):
+                    candidates = stored
+                    self._wiki_candidates_memory[key] = stored
+            if not isinstance(candidates, dict):
+                continue
+            try:
+                expires_at = float(candidates.get("expires_at", 0))
+            except (TypeError, ValueError):
+                expires_at = 0
+            raw_results = candidates.get("results")
+            if expires_at >= now and isinstance(raw_results, list) and raw_results:
+                return candidates, False
+            if expires_at < now:
+                expired_seen = True
+        return None, expired_seen
+
+    async def _save_wiki_candidates(
+        self,
+        event: AstrMessageEvent,
+        results: list[WikiResult],
+    ) -> None:
+        payload = {
+            "created_at": time.time(),
+            "expires_at": time.time() + 5 * 60,
+            "results": [result.to_dict() for result in results[:5]],
+        }
+        for key in self._wiki_candidate_keys(event):
+            self._wiki_candidates_memory[key] = payload
+            try:
+                await self.put_kv_data(key, payload)
+            except Exception:
+                # The memory copy still makes the same-process interaction
+                # work when the KV backend is temporarily unavailable.
+                logger.warning("保存 Wiki 候选失败：%s", key, exc_info=True)
+
+    async def _invalidate_wiki_candidates(self, event: AstrMessageEvent) -> None:
+        payload = {
+            "created_at": time.time(),
+            "expires_at": time.time(),
+            "results": [],
+        }
+        for key in self._wiki_candidate_keys(event):
+            self._wiki_candidates_memory[key] = payload
+            try:
+                await self.put_kv_data(key, payload)
+            except Exception:
+                logger.warning("清理 Wiki 候选失败：%s", key, exc_info=True)
 
     async def _query_fflogs(self, character_name: str, server_name: str) -> str:
         error = self._feature_error("logs", "FFLogs")
@@ -338,18 +438,11 @@ class FF14LogsPlugin(Star):
                 index = int(query[1:])
             except ValueError:
                 return "❌ 候选编号必须是数字，例如 /ff14 wiki #1。"
-            candidates = await self.get_kv_data(
-                f"wiki_candidates:{event.unified_msg_origin}",
-                {},
-            )
-            if not isinstance(candidates, dict):
-                return "❌ 没有找到5分钟内的候选词条，请重新搜索。"
-            try:
-                expired = datetime.now().timestamp() > float(candidates.get("expires_at", 0))
-            except (TypeError, ValueError):
-                expired = True
-            if expired:
+            candidates, expired = await self._load_wiki_candidates(event)
+            if candidates is None and expired:
                 return "❌ 上一次 Wiki 候选已过期，请重新搜索。"
+            if candidates is None:
+                return "❌ 没有找到5分钟内的候选词条，请重新搜索。"
             raw_results = candidates.get("results", [])
             if not isinstance(raw_results, list) or not 1 <= index <= len(raw_results):
                 return "❌ 候选编号不存在，请使用列表中的编号。"
@@ -383,19 +476,15 @@ class FF14LogsPlugin(Star):
             (result for result in results if result.title.casefold() == query.casefold()),
             None,
         )
-        if exact:
-            if exact.page_type == "任务":
-                progress = await self.quest_graph.progress_for(exact.title)
+        if len(results) == 1 or exact:
+            selected = exact or results[0]
+            if selected.page_type == "任务":
+                progress = await self.quest_graph.progress_for(selected.title)
                 if progress:
-                    exact = WikiResult(**{**exact.__dict__, "quest_progress": progress})
-            return self.wiki.format_results(query, [exact])
-        await self.put_kv_data(
-            f"wiki_candidates:{event.unified_msg_origin}",
-            {
-                "expires_at": (datetime.now() + timedelta(minutes=5)).timestamp(),
-                "results": [result.to_dict() for result in results[:5]],
-            },
-        )
+                    selected = WikiResult(**{**selected.__dict__, "quest_progress": progress})
+            await self._invalidate_wiki_candidates(event)
+            return self.wiki.format_results(query, [selected])
+        await self._save_wiki_candidates(event, results)
         return self.wiki.format_results(query, results[:5])
 
     async def _patch_result(self, version: str) -> str:
@@ -430,13 +519,19 @@ class FF14LogsPlugin(Star):
         now = normalize_now()
         current = self.pvp.current_frontline()
         cc = self.pvp.current_cc()
+        weekly = self.pvp.weekly_frontline()
+        map_ids = list(dict.fromkeys(entry.map_id for entry in weekly))
+        image_data = await asyncio.gather(
+            *(self.pvp.local_image_data(map_id, self.data_dir) for map_id in map_ids),
+        )
+        image_by_map = dict(zip(map_ids, image_data, strict=True))
         maps = [
             {
                 "date": entry.start_at.strftime("%m-%d"),
                 "name": entry.name,
-                "image_url": entry.image_url,
+                "image_data": image_by_map.get(entry.map_id, ""),
             }
-            for entry in self.pvp.weekly_frontline()
+            for entry in weekly
         ]
         cc_upcoming = [
             {

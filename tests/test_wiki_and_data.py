@@ -3,6 +3,7 @@ import asyncio
 import httpx
 
 from services.fashion import FashionService
+from services.pvp import PvpService
 from services.wiki import WIKI_API_URL, WikiResult, WikiService
 
 
@@ -151,6 +152,61 @@ def test_wiki_format_marks_ambiguous_candidates():
     assert "#1" in text
     assert "#2" in text
     assert "候选" in text
+
+
+def test_wiki_format_displays_one_result_directly_even_when_it_is_a_candidate():
+    text = WikiService.format_results(
+        "舞台上最悲惨的演员",
+        [
+            WikiResult(
+                "舞台上最悲惨的演员",
+                "候选",
+                "Wiki搜索接口暂时不可用；当前没有可用缓存。",
+                source_url="https://example.com/search",
+            ),
+        ],
+    )
+
+    assert "有多个候选" not in text
+    assert "舞台上最悲惨的演员" in text
+    assert "当前没有可用缓存" in text
+
+
+def test_pvp_map_image_is_cached_and_embedded(tmp_path, monkeypatch):
+    async def scenario():
+        service = PvpService({})
+        calls = 0
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return None
+
+            async def get(self, url):
+                nonlocal calls
+                calls += 1
+                return httpx.Response(
+                    200,
+                    content=b"RIFF1234WEBP",
+                    headers={"content-type": "image/webp"},
+                    request=httpx.Request("GET", url),
+                )
+
+        monkeypatch.setattr(
+            "services.pvp.create_http_client",
+            lambda config, timeout: FakeClient(),
+        )
+        first = await service.local_image_data("secure", tmp_path)
+        second = await service.local_image_data("secure", tmp_path)
+
+        assert first.startswith("data:image/webp;base64,")
+        assert second == first
+        assert calls == 1
+        assert (tmp_path / "pvp_maps" / "secure.webp").read_bytes() == b"RIFF1234WEBP"
+
+    asyncio.run(scenario())
 
 
 def test_fashion_parser_requires_confirmed_theme_and_80_point_data():

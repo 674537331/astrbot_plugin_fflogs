@@ -48,7 +48,7 @@
 - `reminder_types`：提醒类型多选。2.0.0 默认空列表，升级后不会自动开始推送。
 - `reminder_targets`：使用 `template_list` 添加海钓路线/成就鱼、限时采集物和天气鱼目标，填写名称、ET 窗口、区域、提前分钟数和启用状态。
 
-群聊执行 `subscribe` / `unsubscribe` 需要群管理员权限；私聊用户可以管理自己的会话。订阅只保存当前 `unified_msg_origin`，内容取决于后台提醒设置。事件 ID、订阅和 Wiki 候选使用 AstrBot KV 持久化，调度器每分钟检查一次，重载或卸载时会取消任务。
+群聊执行 `subscribe` / `unsubscribe` 需要群管理员权限；私聊用户可以管理自己的会话。订阅只保存当前 `unified_msg_origin`，内容取决于后台提醒设置。事件 ID、订阅和 Wiki 候选使用 AstrBot KV 持久化；Wiki 候选按平台和群/用户会话保存 5 分钟，插件进程内还有短暂的内存兜底。调度器每分钟检查一次，重载或卸载时会取消任务。
 
 FFLogs 查询仍需在 [FFLogs API Clients](https://www.fflogs.com/api/clients/) 创建 V2 客户端并填写 `client_id` 与 `client_secret`。`client_secret` 在配置界面中以敏感字段显示。`proxy_url` 仍适用于所有外部 HTTP 请求。
 
@@ -59,7 +59,7 @@ FFLogs 查询仍需在 [FFLogs API Clients](https://www.fflogs.com/api/clients/)
 - 主线任务图从国服数据仓库运行时下载 `Quest.csv`，缓存于 `data/plugin_data/astrbot_plugin_fflogs/`，不会提交大型数据文件。任务百分比表示数据图中的顺序位置，不表示账号实际完成度。
 - PvP 轮换使用版本化参考时间、间隔和地图顺序，管理员可以在 `pvp_rotation` 中覆盖；算法设计参考 [ffxiv-wakeng/pvp-calendar](https://github.com/ffxiv-wakeng/pvp-calendar)，没有复制其代码或资源。
 - 时尚评鉴使用公开的社区确认页面。数据源没有确认主题或 80 分方案时，插件不会猜测，并且不会据此创建提醒。
-- 生成的日历/PvP 图片、Wiki缓存和 Quest.csv 都位于 AstrBot 插件数据目录，不写入插件源码目录。
+- 生成的日历/PvP 图片、Wiki缓存、PvP 地图缩略图和 Quest.csv 都位于 AstrBot 插件数据目录，不写入插件源码目录；PvP 周历把缓存图片嵌入最终 PNG，渲染器无法访问外部图片时也不会出现破图标。
 
 Wiki 结果只保留短摘要、结构化字段和原文链接；Wiki 内容版权及署名遵守 CC BY-NC-SA 3.0，不批量复制或打包页面内容。
 
